@@ -1,0 +1,36 @@
+=== \du (롤 목록) ===
+                                    롤 목록
+     롤 이름      |                      속성                      | 소속 그룹: 
+------------------+------------------------------------------------+------------
+ dept_dev         | 5개 연결                                       | {}
+ dept_infra       | 5개 연결                                       | {}
+ dept_sales       | 5개 연결                                       | {}
+ security_admin   |                                                | {}
+ security_analyst | 10개 연결                                      | {}
+ security_manager | 15개 연결                                      | {}
+ summer           | 슈퍼유저, 롤 만들기, DB 만들기, 복제, RLS 통과 | {}
+
+
+=== role 별 연결제한 / 세션 파라미터 (resource_limits.sql) ===
+     rolname      | conn_limit |                        session_settings                         
+------------------+------------+-----------------------------------------------------------------
+ dept_dev         |          5 | statement_timeout=15s  idle_in_transaction_session_timeout=5min
+ dept_infra       |          5 | statement_timeout=15s  idle_in_transaction_session_timeout=5min
+ dept_sales       |          5 | statement_timeout=15s  idle_in_transaction_session_timeout=5min
+ security_admin   |         -1 | idle_in_transaction_session_timeout=5min
+ security_analyst |         10 | statement_timeout=30s  idle_in_transaction_session_timeout=5min
+ security_manager |         15 | statement_timeout=30s  idle_in_transaction_session_timeout=5min
+(6개 행)
+
+
+=== 비밀번호 유형 (auth_hardening.sql — 임시 예시 비번, trust 라 미사용) ===
+     rolname      |    pw_type    
+------------------+---------------
+ dept_dev         | scram-sha-256
+ dept_infra       | scram-sha-256
+ dept_sales       | scram-sha-256
+ security_admin   | scram-sha-256
+ security_analyst | scram-sha-256
+ security_manager | scram-sha-256
+(6개 행)
+

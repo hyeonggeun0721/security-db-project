@@ -1,0 +1,274 @@
+"""
+soc_dashboard.py - security_db SOC 대시보드 (Streamlit + psycopg2 + plotly.graph_objects)
+
+실행:
+    streamlit run soc_dashboard.py
+    # 헤드리스: streamlit run soc_dashboard.py --server.headless true --server.port 8502
+
+DB 접속 계정 = security_manager :
+    security_events / responses 에는 RLS(p_events_dept_scope 등)가 걸려 있어서
+    부서 역할(dept_infra/dev/sales)로 붙으면 "그 부서 자산에서 난 이벤트/대응"만 보인다.
+    SOC 대시보드는 전사(全社) 현황을 봐야 하므로, RBAC 상 전체 SELECT 권한이 있고
+    p_events_rbac_all / p_responses_rbac_all 정책으로 RLS를 우회하는 security_manager 로
+    접속한다. (security_manager 는 쓰기 권한이 없어 읽기 전용 대시보드에 딱 맞다.)
+
+참고: 이 환경의 plotly.express 는 xarray/구버전 numpy 충돌로 import 불가라
+      plotly.graph_objects 로 직접 그린다.
+"""
+
+import decimal
+import os
+
+import pandas as pd
+import psycopg2
+import plotly.graph_objects as go
+import streamlit as st
+
+# 로컬 trust 인증이라 비밀번호 불필요. 운영에서 비밀번호 인증으로 전환하면
+# 코드에 넣지 말고 PGPASSWORD 환경변수나 ~/.pgpass(chmod 600) 로 주입한다.
+DB_DSN = dict(
+    dbname=os.environ.get("PGDATABASE", "security_db"),
+    user=os.environ.get("SOC_DASHBOARD_DB_USER", "security_manager"),
+)
+
+SEV_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+SEV_COLORS = {"LOW": "#3BA55D", "MEDIUM": "#E3B341", "HIGH": "#E8833A", "CRITICAL": "#D64045", "N/A": "#9AA0A6"}
+RISK_COLORS = {"LOW": "#3BA55D", "MEDIUM": "#E3B341", "HIGH": "#E8833A", "CRITICAL": "#D64045"}
+
+st.set_page_config(page_title="security_db SOC 대시보드", layout="wide")
+
+
+@st.cache_resource
+def get_conn():
+    conn = psycopg2.connect(**DB_DSN)
+    conn.set_session(readonly=True, autocommit=True)
+    return conn
+
+
+def q(sql):
+    with get_conn().cursor() as cur:
+        cur.execute(sql)
+        cols = [c[0] for c in cur.description]
+        rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=cols)
+
+
+_TABLE_CSS = (
+    "<style>.soc-table{border-collapse:collapse;width:100%;font-size:13px;"
+    "font-family:-apple-system,Segoe UI,sans-serif}"
+    ".soc-table th,.soc-table td{border:1px solid #e4e6eb;padding:5px 9px;text-align:left;"
+    "white-space:nowrap}.soc-table th{background:#f3f4f6;font-weight:600}"
+    ".soc-table tr:nth-child(even){background:#fafbfc}</style>"
+)
+
+
+def show(df, **_):
+    """이 환경은 pyarrow 21 + pandas 1.4 조합이라 st.dataframe(내부적으로 pa.Table.from_pandas)
+    이 깨진다(Input object was not a NumPy array). 그래서 pyarrow 를 안 타는
+    df.to_html() 로 정적 테이블을 렌더한다. (읽기 전용 대시보드라 정렬/필터 UI는 불필요)"""
+    d = df.reset_index(drop=True).copy()
+    for c in d.columns:
+        if d[c].dtype == object:
+            d[c] = d[c].apply(lambda v: "" if v is None else str(v))
+    st.markdown(_TABLE_CSS + d.to_html(index=False, escape=True, border=0, classes="soc-table"),
+                unsafe_allow_html=True)
+
+
+def bar(x, y, colors, horizontal=False, height=340, text=None):
+    fig = go.Figure()
+    if horizontal:
+        fig.add_bar(y=x, x=y, orientation="h", marker_color=colors,
+                    text=text if text is not None else y, textposition="auto")
+        fig.update_layout(yaxis=dict(autorange="reversed"))
+    else:
+        fig.add_bar(x=x, y=y, marker_color=colors,
+                    text=text if text is not None else y, textposition="auto")
+    fig.update_layout(height=height, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+    return fig
+
+
+st.title("🛡️ security_db · SOC 대시보드")
+
+# --------------------------------------------------- 사이드바: 합성(SIM) 데이터 필터
+# 기본값 OFF(제외). 이유: 이 대시보드는 "실제 프로젝트 데이터"(ATT&CK 매핑·의도된 급증
+# 시나리오가 있는 큐레이션된 이벤트)를 보여주는 게 1차 목적이다. 합성 이벤트는
+# 파이프라인이 살아있음을 보여주는 스캐폴딩이라 vuln_id/ATT&CK 가 없어 e/f 섹션을
+# "(미매핑)" 으로 희석시킨다. 데모에서 "피드가 흐른다"를 보이고 싶을 때만 켠다.
+with st.sidebar:
+    st.header("표시 옵션")
+    include_sim = st.checkbox(
+        "합성(시뮬레이션) 데이터 포함 보기", value=False,
+        help="끄면 description / action_taken 이 '[SIM]' 로 시작하는 행을 "
+             "모든 집계·차트·표에서 제외합니다.")
+    try:
+        _sim_e = int(q("SELECT count(*) c FROM security_events WHERE description LIKE '[SIM]%'")["c"][0])
+        _sim_r = int(q("SELECT count(*) c FROM responses WHERE action_taken LIKE '[SIM]%'")["c"][0])
+        st.caption(f"합성 이벤트 {_sim_e}건 / 대응 {_sim_r}건 · 현재 "
+                   + (":green[**포함**]" if include_sim else ":orange[**제외**]"))
+    except Exception:
+        pass
+
+# 필터 조각 (description 은 NULL 가능 → coalesce 필수)
+_EVT = "" if include_sim else " AND coalesce(e.description,'') NOT LIKE '[SIM]%'"
+_EVT_BARE = "" if include_sim else " AND coalesce(description,'') NOT LIKE '[SIM]%'"
+_EVT_W = "" if include_sim else " WHERE coalesce(description,'') NOT LIKE '[SIM]%'"
+# audit_log: 대상이 SIM 이벤트/대응인 변경행을 제외 (현재 SIM 행은 삭제 안 됨)
+_AUD_W = "" if include_sim else (
+    " WHERE NOT (table_name='security_events' AND row_pk::int IN "
+    "(SELECT event_id FROM security_events WHERE description LIKE '[SIM]%'))"
+    "   AND NOT (table_name='responses' AND row_pk::int IN "
+    "(SELECT response_id FROM responses WHERE action_taken LIKE '[SIM]%'))")
+
+st.caption(f"접속 계정: `security_manager` (RLS 우회 · 읽기 전용) · "
+           f"합성데이터 {'포함' if include_sim else '제외'} · "
+           f"새로고침 {pd.Timestamp.now():%Y-%m-%d %H:%M:%S}")
+
+# ------------------------------------------------------------------ a. 요약 카드
+open_events = int(q(f"SELECT count(*) c FROM security_events WHERE status='OPEN'{_EVT_BARE}")["c"][0])
+crit_assets = int(q("SELECT count(*) c FROM vw_asset_risk_score WHERE risk_label='CRITICAL'")["c"][0])
+new_24h = int(q(f"SELECT count(*) c FROM security_events WHERE detected_at >= now() - interval '24 hours'{_EVT_BARE}")["c"][0])
+try:
+    audit_changes = int(q(f"SELECT count(*) c FROM audit_log{_AUD_W}")["c"][0])
+    audit_label = "감사로그 변경 건수(누적)"
+except Exception:
+    audit_changes, audit_label = -1, "감사로그(권한 없음)"
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("미해결(OPEN) 이벤트", open_events)
+c2.metric("CRITICAL 위험 자산", crit_assets)
+c3.metric("최근 24h 신규 이벤트", new_24h)
+c4.metric(audit_label, audit_changes)
+st.divider()
+
+# ------------------------------------------------------- b, f  심각도 / ATT&CK
+colb, colf = st.columns(2)
+with colb:
+    st.subheader("b. 심각도별 이벤트 분포")
+    df = q(f"SELECT severity, count(*) AS events FROM security_events{_EVT_W} GROUP BY severity")
+    df = df.set_index("severity").reindex(SEV_ORDER).fillna(0).reset_index()
+    st.plotly_chart(bar(df["severity"].tolist(), df["events"].astype(int).tolist(),
+                        [SEV_COLORS[s] for s in df["severity"]]), use_container_width=True)
+with colf:
+    st.subheader("f. MITRE ATT&CK 전술별 이벤트 분포")
+    df = q(f"""
+        SELECT COALESCE(v.attack_tactic, '(미매핑)') AS tactic, count(*) AS events
+        FROM security_events e
+        LEFT JOIN vulnerabilities v ON v.vuln_id = e.vuln_id
+        WHERE true{_EVT}
+        GROUP BY 1 ORDER BY events DESC
+    """)
+    st.plotly_chart(bar(df["tactic"].tolist(), df["events"].astype(int).tolist(),
+                        "#E8833A", horizontal=True), use_container_width=True)
+st.divider()
+
+# --------------------------------------------------------- c. 자산 위험도 Top N
+st.subheader("c. 자산별 위험도 Top N (vw_asset_risk_score)")
+topn = st.slider("Top N", 5, 14, 10)
+df = q("""
+    SELECT asset_name, department, importance_level, open_vuln_count,
+           max_open_cvss, risk_score, risk_label
+    FROM vw_asset_risk_score
+    ORDER BY risk_score DESC, asset_name
+""").head(topn).iloc[::-1]
+st.plotly_chart(
+    bar(df["asset_name"].tolist(), df["risk_score"].astype(float).tolist(),
+        [RISK_COLORS[l] for l in df["risk_label"]], horizontal=True,
+        height=max(300, 42 * len(df))),
+    use_container_width=True)
+st.caption("색상: 🟩 LOW · 🟨 MEDIUM · 🟧 HIGH · 🟥 CRITICAL  (risk_score = importance_level × 미해결 최대 CVSS)")
+show(df.iloc[::-1], use_container_width=True, hide_index=True)
+st.divider()
+
+# ----------------------------------------------------------- d. 일별 이벤트 추이
+st.subheader("d. 일별 이벤트 추이 (detected_at)")
+df = q(f"""
+    SELECT date_trunc('day', detected_at)::date AS day, count(*) AS events
+    FROM security_events{_EVT_W} GROUP BY 1 ORDER BY 1
+""")
+fig = go.Figure(go.Scatter(x=df["day"], y=df["events"], mode="lines+markers",
+                           line=dict(color="#4C78A8", width=2)))
+fig.update_layout(height=320, margin=dict(t=10, b=10))
+st.plotly_chart(fig, use_container_width=True)
+st.caption("※ 급증 구간(결제API서버 2025-08-14=8건, 사내DB서버 2025-09-01=5건)이 피크로 나타남")
+st.divider()
+
+# ------------------------------------------- e. CVSS-심각도 불일치 (내부 + NVD)
+st.subheader("e. CVSS · 심각도 불일치")
+st.markdown("**e-1. vw_cvss_severity_mismatch** — 내부 점수(cvss_score) ↔ 라벨(severity) 정합성")
+df1 = q("""
+    SELECT source_table, record_id, ref_code, cvss_score,
+           labeled_severity, expected_severity, severity_gap
+    FROM vw_cvss_severity_mismatch
+    ORDER BY severity_gap DESC, source_table, record_id
+""")
+show(df1)
+st.caption(f"{len(df1)}건")
+st.markdown("**e-2. vw_cvss_nvd_mismatch** — 우리 평가치 ↔ NVD 공식값 (severity 불일치 또는 CVSS 0.5+ 차이)")
+df2 = q("""
+    SELECT cve_id, our_cvss, our_severity, nvd_cvss, nvd_severity,
+           nvd_cvss_version, cvss_abs_diff, severity_gap
+    FROM vw_cvss_nvd_mismatch
+    ORDER BY cvss_abs_diff DESC, severity_gap DESC
+""")
+show(df2)
+st.caption(f"{len(df2)}건 · 출처: nvd_cve_details (NVD REST API 2.0)")
+st.divider()
+
+# ----------------------------------------- h. EPSS 우선순위 (CVSS × EPSS)
+st.subheader("h. EPSS 악용확률 기반 우선순위 (CVSS × EPSS)")
+st.caption("priority_score = cvss_score × epss_score  ·  EPSS = 향후 30일 내 악용 활동 관측 확률(FIRST.org)  ·  "
+           "🔴 epss_over_cvss = CVSS 는 LOW/MEDIUM 인데 EPSS 백분위 상위 10%")
+dfp = q("""
+    SELECT cve_id, source, cvss_score AS cvss, cvss_severity, epss_score, epss_percentile,
+           priority_score, epss_band, epss_over_cvss, open_on_assets
+    FROM vw_priority_vulnerabilities
+""")
+colh1, colh2 = st.columns(2)
+with colh1:
+    st.markdown("**h-1. priority(CVSS×EPSS) 상위** — '실제 악용' 반영")
+    top_p = dfp.sort_values("priority_score", ascending=False).head(8).copy()
+    top_p.insert(0, "", top_p["epss_over_cvss"].map(lambda b: "🔴" if b else ""))
+    show(top_p[["", "cve_id", "cvss", "cvss_severity", "epss_score",
+               "epss_band", "priority_score", "open_on_assets"]])
+with colh2:
+    st.markdown("**h-2. CVSS 상위** — 같은 데이터, CVSS 만으로 정렬(대조군)")
+    top_c = dfp.sort_values(["cvss", "priority_score"], ascending=False).head(8)
+    show(top_c[["cve_id", "cvss", "cvss_severity", "epss_score",
+                "priority_score", "epss_band"]])
+n_over = int(dfp["epss_over_cvss"].sum()) if len(dfp) else 0
+if n_over:
+    gems = dfp[dfp["epss_over_cvss"]].sort_values("epss_percentile", ascending=False)
+    lines = " · ".join(f"{r.cve_id}(CVSS {r.cvss} {r.cvss_severity}, EPSS 백분위 {r.epss_percentile:.3f})"
+                       for r in gems.itertuples())
+    st.warning(f"🔴 CVSS 로는 후순위지만 실제 악용 상위인 취약점 {n_over}건: {lines}")
+else:
+    st.info("현재 데이터에 'CVSS 낮음 + EPSS 상위 10%' 케이스 없음. (EPSS 미제공/저 EPSS)")
+st.caption(f"{len(dfp)}건 · 출처: nvd_cve_details.epss_* (FIRST.org EPSS API) · KISA SCAN 행은 CVE 없어 제외")
+st.divider()
+
+# ------------------------------------------------------- g. 최근 감사 로그 20건
+st.subheader("g. 최근 감사 로그 20건 (audit_log)")
+try:
+    dfa = q(f"""
+        SELECT changed_at, table_name, operation, row_pk, changed_by
+        FROM audit_log{_AUD_W} ORDER BY changed_at DESC, audit_id DESC LIMIT 20
+    """)
+    if dfa.empty:
+        st.info("audit_log 가 비어 있습니다 (트리거는 활성).")
+    else:
+        show(dfa, use_container_width=True, height=420, hide_index=True)
+except Exception as ex:
+    st.warning(f"audit_log 조회 불가: {ex}")
+
+# ------------------------------------------- 부록. NVD 신규 CVE 워치 후보
+with st.expander("부록 · NVD 신규 CVE 워치 후보 (nvd_watch_candidates)"):
+    try:
+        dfw = q("""
+            SELECT cve_id, matched_keywords, nvd_cvss_score, nvd_severity,
+                   nvd_published_date::date AS published, review_status
+            FROM nvd_watch_candidates ORDER BY nvd_cvss_score DESC NULLS LAST
+        """)
+        show(dfw, use_container_width=True, height=300, hide_index=True)
+        st.caption(f"{len(dfw)}건 · 분석가 검토 큐 (자동 병합 안 함)")
+    except Exception as ex:
+        st.warning(f"nvd_watch_candidates 조회 불가: {ex}")
