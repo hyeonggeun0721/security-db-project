@@ -1,0 +1,524 @@
+{
+  "scan_timestamp": "2026-09-07T12:33:35.411506",
+  "hostname": "044ccaaddc20",
+  "platform": "Linux",
+  "is_linux": true,
+  "distro": {
+    "family": "debian",
+    "pretty_name": "Ubuntu 22.04.5 LTS",
+    "pam_auth_file": "/etc/pam.d/common-auth",
+    "pam_password_file": "/etc/pam.d/common-password",
+    "package_manager": "apt"
+  },
+  "is_root": true,
+  "total": 72,
+  "양호": 44,
+  "취약": 14,
+  "점검불가": 14,
+  "results": [
+    {
+      "item_code": "U-01",
+      "item_name": "root 계정 원격 접속 제한",
+      "result": "취약",
+      "current_setting": "PermitRootLogin 설정 없음(배포판 기본값 확인 필요, 보통 prohibit-password 또는 yes)",
+      "recommendation": "/etc/ssh/sshd_config 에서 'PermitRootLogin no' 설정 후 sshd 재시작 권고 (prohibit-password는 패스워드 인증만 차단, 완전 차단 아님에 유의)"
+    },
+    {
+      "item_code": "U-02",
+      "item_name": "패스워드 복잡성 설정",
+      "result": "취약",
+      "current_setting": "파일: /etc/pam.d/common-password / minlen=0 / 조합종류=0",
+      "recommendation": "3종류 이상 조합 시 8자리 이상, 2종류 조합 시 10자리 이상 강제 설정 권고"
+    },
+    {
+      "item_code": "U-03",
+      "item_name": "계정 잠금 임계값 설정",
+      "result": "양호",
+      "current_setting": "deny=3 (/etc/pam.d/common-auth, /etc/security/faillock.conf)",
+      "recommendation": "실패 임계값 5회 이하 권고"
+    },
+    {
+      "item_code": "U-04",
+      "item_name": "패스워드 파일 보호(shadow 사용)",
+      "result": "양호",
+      "current_setting": "모든 계정 shadow 체계 사용 중",
+      "recommendation": "/etc/passwd 2번째 필드를 'x'로, 실제 해시는 /etc/shadow에 보관"
+    },
+    {
+      "item_code": "U-05",
+      "item_name": "root 홈, PATH 디렉터리 권한 및 설정",
+      "result": "양호",
+      "current_setting": "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin / /root 권한=700",
+      "recommendation": "PATH에 '.' 또는 빈 요소 제거, /root 권한 750 이하 권고"
+    },
+    {
+      "item_code": "U-06",
+      "item_name": "파일 및 디렉터리 소유자 설정",
+      "result": "취약",
+      "current_setting": "총 1건 발견 (상위 1건 표시: /root/kisa_scanner.py)",
+      "recommendation": "소유자/그룹 없는 파일은 삭제하거나 올바른 소유자로 재설정 권고"
+    },
+    {
+      "item_code": "U-07",
+      "item_name": "/etc/passwd 소유자 및 권한",
+      "result": "양호",
+      "current_setting": "/etc/passwd 권한=644 소유자root=True",
+      "recommendation": "권한 644 이하, 소유자 root 권고"
+    },
+    {
+      "item_code": "U-08",
+      "item_name": "/etc/shadow 소유자 및 권한",
+      "result": "취약",
+      "current_setting": "/etc/shadow 권한=640 소유자root=True",
+      "recommendation": "권한 400(또는 000) 이하, 소유자 root 권고"
+    },
+    {
+      "item_code": "U-09",
+      "item_name": "/etc/hosts 소유자 및 권한",
+      "result": "양호",
+      "current_setting": "/etc/hosts 권한=644 소유자root=True",
+      "recommendation": "권한 644 이하, 소유자 root 권고"
+    },
+    {
+      "item_code": "U-10",
+      "item_name": "/etc/(x)inetd.conf 소유자 및 권한",
+      "result": "양호",
+      "current_setting": "xinetd/inetd 미사용(systemd 소켓 방식 등)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-11",
+      "item_name": "/etc/syslog.conf 소유자 및 권한",
+      "result": "취약",
+      "current_setting": "/etc/rsyslog.conf 권한=644 소유자root=True",
+      "recommendation": "권한 640 이하, 소유자 root 권고"
+    },
+    {
+      "item_code": "U-12",
+      "item_name": "/etc/services 소유자 및 권한",
+      "result": "점검불가",
+      "current_setting": "/etc/services 접근 불가",
+      "recommendation": "권한 644 이하, 소유자 root 권고"
+    },
+    {
+      "item_code": "U-13",
+      "item_name": "SUID/SGID/Sticky bit 설정 파일 점검",
+      "result": "점검불가",
+      "current_setting": "총 16건 발견 (상위 16건 표시: /usr/sbin/pam_extrausers_chkpwd; /usr/sbin/unix_chkpwd; /usr/bin/chsh; /usr/bin/expiry; /usr/bin/chfn; /usr/bin/su; /usr/bin/mount; /usr/bin/newgrp; /usr/bin/chage; /usr/bin/gpasswd; /usr/bin/umount; /usr/bin/passwd; /usr/bin/crontab; /usr/bin/ssh-agent; /usr/lib/openssh/ssh-keysign; /usr/lib/dbus-1.0/dbus-daemon-launch-helper)",
+      "recommendation": "목록을 수동 검토하여 불필요한 SUID/SGID 비트 제거 권고(자동 취약 판정 안 함, 오탐 방지)"
+    },
+    {
+      "item_code": "U-14",
+      "item_name": "시작파일 및 환경파일 소유자/권한",
+      "result": "양호",
+      "current_setting": "권한 초과 파일: 없음",
+      "recommendation": "시작파일 권한 644 이하 권고"
+    },
+    {
+      "item_code": "U-15",
+      "item_name": "world writable 파일 점검",
+      "result": "취약",
+      "current_setting": "총 63건 발견 (상위 20건 표시: /proc/sys/kernel/ns_last_pid; /proc/keys; /proc/kcore; /proc/pressure/io; /proc/pressure/cpu; /proc/pressure/memory; /proc/interrupts; /proc/timer_list; /proc/1/task/1/attr/current; /proc/1/task/1/attr/exec; /proc/1/task/1/attr/fscreate; /proc/1/task/1/attr/keycreate; /proc/1/task/1/attr/sockcreate; /proc/1/attr/current; /proc/1/attr/exec; /proc/1/attr/fscreate; /proc/1/attr/keycreate; /proc/1/attr/sockcreate; /proc/1/timerslack_ns; /proc/3739/task/3739/attr/current) | 전체 목록: /root/scan_out/kisa_u-15_full_list_20260907_123334.txt",
+      "recommendation": "world writable 권한 제거(chmod o-w) 권고"
+    },
+    {
+      "item_code": "U-16",
+      "item_name": "/dev 내 존재하지 않는 device 파일 점검",
+      "result": "양호",
+      "current_setting": "/dev 내 일반 파일: 없음",
+      "recommendation": "정상 디바이스 노드가 아닌 일반 파일은 삭제 권고"
+    },
+    {
+      "item_code": "U-17",
+      "item_name": "$HOME/.rhosts, hosts.equiv 사용 금지",
+      "result": "양호",
+      "current_setting": "발견: 없음",
+      "recommendation": "신뢰 호스트 기반 인증 파일은 삭제 권고 ('+' 와일드카드 포함 시 특히 위험)"
+    },
+    {
+      "item_code": "U-18",
+      "item_name": "접속 IP 및 포트 제한",
+      "result": "점검불가",
+      "current_setting": "hosts.allow=10줄 / hosts.deny=17줄 / 방화벽 규칙 확인=불가/미사용",
+      "recommendation": "정책적 판단 필요 - 접근 허용 IP/포트가 최소화되어 있는지 수동 검토"
+    },
+    {
+      "item_code": "U-19",
+      "item_name": "finger 서비스 비활성화",
+      "result": "양호",
+      "current_setting": "finger=None; fingerd=None",
+      "recommendation": "finger 서비스 비활성화 권고"
+    },
+    {
+      "item_code": "U-20",
+      "item_name": "Anonymous FTP 비활성화",
+      "result": "양호",
+      "current_setting": "FTP 데몬 설정파일 없음(FTP 미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-21",
+      "item_name": "r계열 서비스(rsh/rlogin/rexec) 비활성화",
+      "result": "양호",
+      "current_setting": "rsh=None; rlogin=None; rexec=None",
+      "recommendation": "r계열 서비스 비활성화 및 패키지 제거 권고"
+    },
+    {
+      "item_code": "U-22",
+      "item_name": "cron 파일 소유자 및 권한",
+      "result": "취약",
+      "current_setting": "위반 파일: ['/etc/crontab(perm=644, root=True)', '/etc/cron.d/e2scrub_all(perm=644, root=True)', '/etc/cron.d/.placeholder(perm=644, root=True)', '/var/spool/cron/crontabs(perm=730, root=True)']",
+      "recommendation": "cron 관련 파일 소유자 root, 권한 640 이하 권고"
+    },
+    {
+      "item_code": "U-23",
+      "item_name": "DoS에 취약한 서비스 비활성화",
+      "result": "양호",
+      "current_setting": "echo=None; discard=None; daytime=None; chargen=None",
+      "recommendation": "echo/discard/daytime/chargen 등 불필요 소규모 서비스 비활성화 권고"
+    },
+    {
+      "item_code": "U-24",
+      "item_name": "NFS 서비스 비활성화",
+      "result": "양호",
+      "current_setting": "nfs-server=None; rpcbind=None",
+      "recommendation": "불필요 시 NFS 서비스 비활성화 권고"
+    },
+    {
+      "item_code": "U-25",
+      "item_name": "NFS 접근 통제",
+      "result": "양호",
+      "current_setting": "/etc/exports 없음(NFS 미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-26",
+      "item_name": "automountd 제거",
+      "result": "양호",
+      "current_setting": "autofs=None",
+      "recommendation": "불필요 시 autofs 서비스/패키지 제거 권고"
+    },
+    {
+      "item_code": "U-27",
+      "item_name": "RPC 서비스 확인",
+      "result": "양호",
+      "current_setting": "rpcinfo 명령 없음/RPC 미사용",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-28",
+      "item_name": "NIS/NIS+ 점검",
+      "result": "양호",
+      "current_setting": "ypserv=None; ypbind=None",
+      "recommendation": "NIS/NIS+ 미사용 시 비활성화 권고"
+    },
+    {
+      "item_code": "U-29",
+      "item_name": "tftp, talk 서비스 비활성화",
+      "result": "양호",
+      "current_setting": "tftp=None; talk=None; ntalk=None",
+      "recommendation": "tftp/talk 서비스 비활성화 권고"
+    },
+    {
+      "item_code": "U-30",
+      "item_name": "Sendmail 버전 점검",
+      "result": "양호",
+      "current_setting": "Sendmail/Postfix 미확인(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-31",
+      "item_name": "스팸 메일 릴레이 제한",
+      "result": "양호",
+      "current_setting": "sendmail/postfix 설정 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-32",
+      "item_name": "일반사용자 Sendmail 실행 방지",
+      "result": "양호",
+      "current_setting": "sendmail.cf 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-33",
+      "item_name": "DNS 보안 버전 패치",
+      "result": "양호",
+      "current_setting": "named(BIND) 미설치로 추정",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-34",
+      "item_name": "DNS Zone Transfer 설정",
+      "result": "양호",
+      "current_setting": "named.conf 없음(DNS 서비스 미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-35",
+      "item_name": "웹서비스 디렉토리 리스팅 제거",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-36",
+      "item_name": "웹서비스 프로세스 권한 제한",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-37",
+      "item_name": "웹서비스 상위 디렉토리 접근 금지",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-38",
+      "item_name": "웹서비스 불필요한 파일 제거",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-39",
+      "item_name": "웹서비스 심볼릭 링크 사용 금지",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-40",
+      "item_name": "웹서비스 파일 업로드/다운로드 제한",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-41",
+      "item_name": "웹서비스 영역 분리",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-42",
+      "item_name": "최신 보안패치 및 벤더 권고사항 적용",
+      "result": "점검불가",
+      "current_setting": "패키지관리자=apt / 업데이트가능개수=24",
+      "recommendation": "정책적 판단(허용 가능한 미패치 기간 등) 필요 - 벤더 보안 공지와 대조한 수동 확인 권고"
+    },
+    {
+      "item_code": "U-43",
+      "item_name": "로그의 정기적 검토 및 보고",
+      "result": "점검불가",
+      "current_setting": "주요 로그 최종수정시각: {} / logrotate 설정존재=True",
+      "recommendation": "로그 검토 담당자·주기·보고 절차는 절차적 항목으로 별도 확인 필요(스크립트로 자동 판정 불가)"
+    },
+    {
+      "item_code": "U-44",
+      "item_name": "root 이외 UID '0' 금지",
+      "result": "양호",
+      "current_setting": "UID 0 계정: ['root']",
+      "recommendation": "root 외 UID 0 계정 제거 권고"
+    },
+    {
+      "item_code": "U-45",
+      "item_name": "root 계정 su 제한",
+      "result": "취약",
+      "current_setting": "pam_wheel use_uid=False / wheel 그룹 구성원=[]",
+      "recommendation": "/etc/pam.d/su 에 'auth required pam_wheel.so use_uid' 추가 및 wheel 그룹 최소화 권고"
+    },
+    {
+      "item_code": "U-46",
+      "item_name": "패스워드 최소 길이 설정",
+      "result": "점검불가",
+      "current_setting": "PASS_MIN_LEN 미설정",
+      "recommendation": "PAM minlen(U-02) 기준으로 판단 필요"
+    },
+    {
+      "item_code": "U-47",
+      "item_name": "패스워드 최대 사용기간 설정",
+      "result": "취약",
+      "current_setting": "PASS_MAX_DAYS=99999",
+      "recommendation": "NIST 800-63B 등 최신 지침은 강제 주기 변경 폐지를 권고하는 추세 - 조직 정책 우선"
+    },
+    {
+      "item_code": "U-48",
+      "item_name": "패스워드 최소 사용기간 설정",
+      "result": "취약",
+      "current_setting": "PASS_MIN_DAYS=0",
+      "recommendation": "당일 재변경 통한 정책 우회 방지를 위해 1일 이상 권고"
+    },
+    {
+      "item_code": "U-49",
+      "item_name": "불필요한 계정 제거",
+      "result": "점검불가",
+      "current_setting": "로그인 셸을 가진 기본 계정: 없음",
+      "recommendation": "불필요 시 계정 삭제 또는 셸을 nologin으로 변경 (사용 여부는 수동 확인 필요)"
+    },
+    {
+      "item_code": "U-50",
+      "item_name": "관리자 그룹에 최소한의 계정 포함",
+      "result": "점검불가",
+      "current_setting": "관리자 그룹 구성원: {'sudo': []} / sudoers 라인수: 0",
+      "recommendation": "관리자 그룹/sudoers 구성원이 업무상 최소한인지 수동 검토 필요"
+    },
+    {
+      "item_code": "U-51",
+      "item_name": "계정이 존재하지 않는 GID 금지",
+      "result": "양호",
+      "current_setting": "GID 미존재 계정: 없음",
+      "recommendation": "/etc/group 에 해당 GID 그룹 추가 또는 계정 GID 수정"
+    },
+    {
+      "item_code": "U-52",
+      "item_name": "동일한 UID 금지",
+      "result": "양호",
+      "current_setting": "중복 UID: 없음",
+      "recommendation": "계정별 고유 UID 부여 권고"
+    },
+    {
+      "item_code": "U-53",
+      "item_name": "사용자 shell 점검",
+      "result": "취약",
+      "current_setting": "대화형 셸을 가진 시스템 계정: ['sync']",
+      "recommendation": "시스템/서비스 계정은 /sbin/nologin 또는 /bin/false 로 설정 권고"
+    },
+    {
+      "item_code": "U-54",
+      "item_name": "session timeout 설정",
+      "result": "취약",
+      "current_setting": "TMOUT 미설정 (/etc/profile, /etc/bash.bashrc)",
+      "recommendation": "TMOUT=600 이하로 설정 후 export 권고"
+    },
+    {
+      "item_code": "U-55",
+      "item_name": "hosts.lpd 소유자 및 권한",
+      "result": "양호",
+      "current_setting": "/etc/hosts.lpd 없음",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-56",
+      "item_name": "UMASK 설정 관리",
+      "result": "양호",
+      "current_setting": "UMASK 값들: ['0o22']",
+      "recommendation": "umask 022 이상 권고"
+    },
+    {
+      "item_code": "U-57",
+      "item_name": "홈디렉토리 소유자 및 권한",
+      "result": "취약",
+      "current_setting": "위반: ['/usr/sbin(perm=755, owner_uid=0, expected_uid=1)', '/bin(perm=755, owner_uid=0, expected_uid=2)', '/dev(perm=755, owner_uid=0, expected_uid=3)', '/bin(perm=755, owner_uid=0, expected_uid=4)', '/usr/games(perm=755, owner_uid=0, expected_uid=5)', '/var/mail(perm=775, owner_uid=0, expected_uid=8)', '/bin(perm=755, owner_uid=0, expected_uid=13)', '/var/backups(perm=755, owner_uid=0, expected_uid=34)', '/run/systemd(perm=755, owner_uid=0, expected_uid=101)', '/run/systemd(perm=755, owner_uid=0, expected_uid=102)', '/run/systemd(perm=755, owner_uid=0, expected_uid=104)']",
+      "recommendation": "홈 디렉터리 소유자를 계정 본인으로, 권한 750 이하 권고"
+    },
+    {
+      "item_code": "U-58",
+      "item_name": "홈디렉토리 존재 여부 관리",
+      "result": "취약",
+      "current_setting": "홈 디렉터리 없는 계정: ['man', 'lp', 'news', 'uucp', 'www-data', 'list', 'irc', 'gnats', 'nobody', '_apt', 'messagebus', 'syslog', 'sshd']",
+      "recommendation": "홈 디렉터리 생성 또는 계정 정리 권고"
+    },
+    {
+      "item_code": "U-59",
+      "item_name": "숨겨진 파일 및 디렉토리 점검",
+      "result": "점검불가",
+      "current_setting": "0건 발견",
+      "recommendation": "/tmp, /var/tmp 등 world-writable 위치의 숨김 파일은 수동 검토 권고(정상 dotfile은 화이트리스트 처리됨)"
+    },
+    {
+      "item_code": "U-60",
+      "item_name": "SSH 원격접속 허용",
+      "result": "점검불가",
+      "current_setting": "Protocol=2(기본값) / sshd 활성=None",
+      "recommendation": "원격 접속이 SSH(Protocol 2)로 안전하게 통제되고 있는지, 불필요한 원격 접속 자체가 없는지 정책적으로 판단 필요"
+    },
+    {
+      "item_code": "U-61",
+      "item_name": "FTP 서비스 확인",
+      "result": "양호",
+      "current_setting": "FTP 활성=None / 설정파일존재=False",
+      "recommendation": "평문 프로토콜인 FTP는 불필요 시 비활성화, 필요 시 FTPS/SFTP 대체 권고"
+    },
+    {
+      "item_code": "U-62",
+      "item_name": "FTP 계정 shell 제한",
+      "result": "양호",
+      "current_setting": "ftp 계정 없음",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-63",
+      "item_name": "ftpusers 파일 소유자 및 권한",
+      "result": "점검불가",
+      "current_setting": "ftpusers 파일 없음",
+      "recommendation": "FTP 미사용이면 해당없음, 사용 시 파일 확인 필요"
+    },
+    {
+      "item_code": "U-64",
+      "item_name": "ftpusers 파일 설정",
+      "result": "점검불가",
+      "current_setting": "ftpusers 파일 없음",
+      "recommendation": "FTP 미사용이면 해당없음"
+    },
+    {
+      "item_code": "U-65",
+      "item_name": "at 파일 소유자 및 권한",
+      "result": "점검불가",
+      "current_setting": "at.allow/at.deny 없음",
+      "recommendation": "at 서비스 미사용이면 해당없음"
+    },
+    {
+      "item_code": "U-66",
+      "item_name": "SNMP 서비스 구동 점검",
+      "result": "양호",
+      "current_setting": "snmpd=None",
+      "recommendation": "불필요 시 SNMP 서비스 비활성화 권고"
+    },
+    {
+      "item_code": "U-67",
+      "item_name": "SNMP 커뮤니티스트링 복잡성",
+      "result": "양호",
+      "current_setting": "snmpd.conf 없음(SNMP 미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-68",
+      "item_name": "로그온 시 경고 메시지 제공",
+      "result": "양호",
+      "current_setting": "배너 존재 여부: {'/etc/motd': False, '/etc/issue': True, '/etc/issue.net': True}",
+      "recommendation": "motd/issue/issue.net 에 경고 문구 설정 권고"
+    },
+    {
+      "item_code": "U-69",
+      "item_name": "NFS 설정파일 접근 제한",
+      "result": "양호",
+      "current_setting": "/etc/exports 없음(NFS 미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-70",
+      "item_name": "expn, vrfy 명령어 제한",
+      "result": "양호",
+      "current_setting": "sendmail/postfix 설정 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-71",
+      "item_name": "Apache 웹 서비스 정보 숨김",
+      "result": "양호",
+      "current_setting": "웹서버 설정 파일 없음(미사용으로 추정)",
+      "recommendation": "해당없음"
+    },
+    {
+      "item_code": "U-72",
+      "item_name": "정책에 따른 시스템 로깅 설정",
+      "result": "점검불가",
+      "current_setting": "rsyslog/syslog-ng 활성=None / 설정된 facility=['kern']",
+      "recommendation": "auth,authpriv,cron,daemon,kern 등 주요 facility 로깅 규칙이 조직 정책과 일치하는지 수동 확인 필요"
+    }
+  ]
+}

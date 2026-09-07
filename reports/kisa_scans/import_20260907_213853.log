@@ -1,0 +1,64 @@
+# KISA import 20260907_213853  report=/Users/summer/security_db_project/reports/kisa_scans/kisa_report_20260907_123335.json  asset_id=16  scan_run_id=1
+# 적재: vulnerabilities 신규 0 / 갱신 14, asset_vulnerabilities 14
+
+## DB 미적재 - 점검불가 (14)
+  U-12   | /etc/services 소유자 및 권한 | /etc/services 접근 불가
+  U-13   | SUID/SGID/Sticky bit 설정 파일 점검 | 총 16건 발견 (상위 16건 표시: /usr/sbin/pam_extrausers_chkpwd; /usr/sbin/unix_chkpwd; /usr/bin/chsh; /usr/bin/expiry; /usr/bin/chfn; /usr/bin/su; /usr/bin/mount; /usr/bin/newgrp; /usr/bin/chage; /usr/bin/gpasswd; /usr/bin/umount; /usr/bin/passwd; /usr/bin/crontab; /usr/bin/ssh-agent; /usr/lib/openssh/ssh-keysign; /usr/lib/dbus-1.0/dbus-daemon-launch-helper)
+  U-18   | 접속 IP 및 포트 제한 | hosts.allow=10줄 / hosts.deny=17줄 / 방화벽 규칙 확인=불가/미사용
+  U-42   | 최신 보안패치 및 벤더 권고사항 적용 | 패키지관리자=apt / 업데이트가능개수=24
+  U-43   | 로그의 정기적 검토 및 보고 | 주요 로그 최종수정시각: {} / logrotate 설정존재=True
+  U-46   | 패스워드 최소 길이 설정 | PASS_MIN_LEN 미설정
+  U-49   | 불필요한 계정 제거 | 로그인 셸을 가진 기본 계정: 없음
+  U-50   | 관리자 그룹에 최소한의 계정 포함 | 관리자 그룹 구성원: {'sudo': []} / sudoers 라인수: 0
+  U-59   | 숨겨진 파일 및 디렉토리 점검 | 0건 발견
+  U-60   | SSH 원격접속 허용 | Protocol=2(기본값) / sshd 활성=None
+  U-63   | ftpusers 파일 소유자 및 권한 | ftpusers 파일 없음
+  U-64   | ftpusers 파일 설정 | ftpusers 파일 없음
+  U-65   | at 파일 소유자 및 권한 | at.allow/at.deny 없음
+  U-72   | 정책에 따른 시스템 로깅 설정 | rsyslog/syslog-ng 활성=None / 설정된 facility=['kern']
+
+## DB 미적재 - 양호 (44)
+  U-03   | 계정 잠금 임계값 설정
+  U-04   | 패스워드 파일 보호(shadow 사용)
+  U-05   | root 홈, PATH 디렉터리 권한 및 설정
+  U-07   | /etc/passwd 소유자 및 권한
+  U-09   | /etc/hosts 소유자 및 권한
+  U-10   | /etc/(x)inetd.conf 소유자 및 권한
+  U-14   | 시작파일 및 환경파일 소유자/권한
+  U-16   | /dev 내 존재하지 않는 device 파일 점검
+  U-17   | $HOME/.rhosts, hosts.equiv 사용 금지
+  U-19   | finger 서비스 비활성화
+  U-20   | Anonymous FTP 비활성화
+  U-21   | r계열 서비스(rsh/rlogin/rexec) 비활성화
+  U-23   | DoS에 취약한 서비스 비활성화
+  U-24   | NFS 서비스 비활성화
+  U-25   | NFS 접근 통제
+  U-26   | automountd 제거
+  U-27   | RPC 서비스 확인
+  U-28   | NIS/NIS+ 점검
+  U-29   | tftp, talk 서비스 비활성화
+  U-30   | Sendmail 버전 점검
+  U-31   | 스팸 메일 릴레이 제한
+  U-32   | 일반사용자 Sendmail 실행 방지
+  U-33   | DNS 보안 버전 패치
+  U-34   | DNS Zone Transfer 설정
+  U-35   | 웹서비스 디렉토리 리스팅 제거
+  U-36   | 웹서비스 프로세스 권한 제한
+  U-37   | 웹서비스 상위 디렉토리 접근 금지
+  U-38   | 웹서비스 불필요한 파일 제거
+  U-39   | 웹서비스 심볼릭 링크 사용 금지
+  U-40   | 웹서비스 파일 업로드/다운로드 제한
+  U-41   | 웹서비스 영역 분리
+  U-44   | root 이외 UID '0' 금지
+  U-51   | 계정이 존재하지 않는 GID 금지
+  U-52   | 동일한 UID 금지
+  U-55   | hosts.lpd 소유자 및 권한
+  U-56   | UMASK 설정 관리
+  U-61   | FTP 서비스 확인
+  U-62   | FTP 계정 shell 제한
+  U-66   | SNMP 서비스 구동 점검
+  U-67   | SNMP 커뮤니티스트링 복잡성
+  U-68   | 로그온 시 경고 메시지 제공
+  U-69   | NFS 설정파일 접근 제한
+  U-70   | expn, vrfy 명령어 제한
+  U-71   | Apache 웹 서비스 정보 숨김
