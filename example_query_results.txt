@@ -1,0 +1,53 @@
+security_db_starter.sql 하단 예제 쿼리 (1)~(4) 실행 결과 검증
+(PostgreSQL 15.19 (Homebrew) / 로컬 검증용 / 전체 17개 SQL 파일을 순서대로 적용한 fresh rebuild 상태:
+ assets 14 · staff 6 · vulnerabilities 12 · asset_vulnerabilities 25 · security_events 30 · responses 18)
+
+=== (1) 자산별 미해결 취약점 개수 (GROUP BY + HAVING >= 2) ===
+  asset_name   | open_count 
+---------------+------------
+ 결제API서버   |          3
+ 사용자포털    |          2
+ 방화벽-메인   |          2
+ 사내DB서버    |          2
+ VPN게이트웨이 |          2
+(5개 행)
+
+=== (2) 가장 취약점이 많은 자산 (서브쿼리) ===
+ asset_name 
+------------
+ 사내DB서버
+(1개 행)
+
+=== (3) 담당자별 처리 실적 (조인 + 집계) ===
+ staff_name | handled_count 
+------------+---------------
+ 김보안     |             7
+ 이관리     |             5
+ 정분석     |             3
+ 최대응     |             2
+ 한관리     |             1
+(5개 행)
+
+=== (4-1) vw_open_high_risk_events (건수) ===
+ rows |  severities   
+------+---------------
+   14 | CRITICAL/HIGH
+(1개 행)
+
+=== (4-2) vw_asset_vuln_summary ===
+ asset_id |   asset_name   | open_vuln_count | total_vuln_count 
+----------+----------------+-----------------+------------------
+        8 | 결제API서버    |               3 |                3
+        2 | 사내DB서버     |               2 |                3
+        3 | 사용자포털     |               2 |                3
+        4 | 방화벽-메인    |               2 |                2
+        7 | VPN게이트웨이  |               2 |                2
+        1 | 웹서버-01      |               1 |                2
+        5 | 직원노트북-023 |               1 |                1
+        6 | 메일서버-01    |               1 |                2
+(8개 행)
+
+메모:
+- 4개 쿼리 모두 확장된 스키마/샘플 데이터와 정상 동작 확인 (fresh rebuild 기준).
+- (2) 서브쿼리는 동률이 없다는 전제로 LIMIT 1 사용 — 동률 시 1건만 반환됨(각주 권장).
+- 라이브 security_db 는 데모 편집으로 responses 19건 / 일부 event status 상이 (QA 재구축본과 다름).
