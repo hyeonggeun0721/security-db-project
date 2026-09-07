@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.auditverify</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/summer/security_db_project/scripts/verify_audit_chain.sh</string>
+    </array>
+
+    <!-- 매일 04:00 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-auditverify.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-auditverify.err.log</string>
+</dict>
+</plist>
