@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.epsssync</string>
+
+    <!-- psycopg2 + requests 가 있는 인터프리터 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/summer/opt/anaconda3/bin/python3</string>
+        <string>/Users/summer/security_db_project/scripts/epss_sync.py</string>
+    </array>
+
+    <!-- 매일 05:00 (backup 03:30 / auditverify 04:00 과 겹치지 않음). EPSS 값은 매일 갱신됨. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+        <key>PATH</key>
+        <string>/Users/summer/opt/anaconda3/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-epsssync.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-epsssync.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.alertpoll</string>
+
+    <!-- psycopg2 가 있는 인터프리터. `which python3` 결과가 다르면 맞출 것. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/summer/opt/anaconda3/bin/python3</string>
+        <string>/Users/summer/security_db_project/scripts/alert_poller.py</string>
+    </array>
+
+    <!-- 2분 주기 폴링 (CRITICAL 이벤트 + 감사체인 손상) -->
+    <key>StartInterval</key>
+    <integer>120</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+        <key>PATH</key>
+        <string>/Users/summer/opt/anaconda3/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- [SIM] CRITICAL 이벤트도 알림 (0 이면 제외). 문구에 [SIM] 표기됨 -->
+        <key>ALERT_INCLUDE_SIM</key>
+        <string>1</string>
+        <!-- 있으면 자동으로 Slack 도 시도: <key>SLACK_WEBHOOK_URL</key><string>https://hooks.slack.com/...</string> -->
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-alertpoll.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-alertpoll.err.log</string>
+</dict>
+</plist>
