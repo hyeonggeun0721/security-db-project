@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.backup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/summer/security_db_project/scripts/backup_scheduled.sh</string>
+    </array>
+
+    <!-- 매일 03:30 실행 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <!-- load 시 즉시 실행하지 않음 (스케줄 또는 launchctl start 로만) -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+    </dict>
+
+    <!-- launchd 로그는 TCC 비보호 경로에 둔다(~/Desktop 은 백그라운드 에이전트에서 접근 제한) -->
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-backup.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-backup.err.log</string>
+</dict>
+</plist>
