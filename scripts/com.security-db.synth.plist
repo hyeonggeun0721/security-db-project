@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.synth</string>
+
+    <!-- psycopg2 가 설치된 인터프리터 사용 (/usr/bin/python3 에는 없음).
+         `which python3` 결과에 맞춰 경로 조정. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/summer/opt/anaconda3/bin/python3</string>
+        <string>/Users/summer/security_db_project/scripts/generate_synthetic_events.py</string>
+    </array>
+
+    <!-- 25분마다 -->
+    <key>StartInterval</key>
+    <integer>1500</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+        <key>PATH</key>
+        <string>/Users/summer/opt/anaconda3/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- launchd 로그는 TCC 비보호 경로 (~/Desktop 은 백그라운드 에이전트 접근 제한) -->
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-synth.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-synth.err.log</string>
+</dict>
+</plist>
