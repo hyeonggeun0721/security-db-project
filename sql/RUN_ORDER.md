@@ -66,6 +66,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V031 | `epss_priority_scoring` | EPSS 연동: `nvd_cve_details.epss_*` 컬럼(0~1 CHECK) + `nvd_status` 에 `PENDING` 추가 + `vw_priority_vulnerabilities`(priority = cvss×epss) | **17**(nvd_cve_details). `@migrate:verify`. 데이터는 `epss_sync.py` 가 적재 |
 | V032 | `alert_log` | 실시간 알림 dedup 테이블: `(alert_type, ref_key)` UNIQUE. `alert_poller.py` 가 중복 알림 방지에 사용 | 4(GRANT). `@migrate:verify` |
 | V033 | `event_threat_matching` | 벡터검색-이벤트 연결: `security_events.embedding`(threat_reports 와 동일 차원) + `event_threat_matches`(THREAT_REPORT/PAST_EVENT) + `vw_event_threat_matches` | 2(pgvector/threat_reports), 4(GRANT). `@migrate:verify`. 데이터는 `event_threat_linker.py` 가 채움 |
+| V034 | `threat_campaign_events` | **데이터 전용**: 실제 이벤트 12건(캠페인 8 + 일반 4) + 대응 12건 INSERT, `threat_reports` 3·5·6·7·8 의 `related_event_id` 연결(이제 8/8). 표본 확충 + 매칭 커버리지 | 9(샘플데이터), 27(event_types), 28(응답 타이밍), 33(임베딩). `@migrate:verify`. 적재 후 `event_threat_linker.py` 재실행 |
 
 각 그룹(V018~20, V021~26)은 대체로 상호 독립이며 표 순서가 자연스럽다.
 V021(search_path)은 V022(EXECUTE 회수)보다 먼저 — 함수 정의를 만지므로.
@@ -217,9 +218,12 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 - **대시보드**: `soc_dashboard.py` 섹션 i — i-1(THREAT_REPORT)/i-2(PAST_EVENT) 로 분리,
   각자 유사도순 상위 15건, SIM 필터(`coalesce(description,'') NOT LIKE '[SIM]%'`) 연동.
 - **적용 완료**(2026-09-08): `migrate.py up` 으로 V033 적용, `event_threat_linker.py` 실행,
-  launchd `threatlink` 등록. `MIN_SIMILARITY`=0.45 는 THREAT_REPORT 노이즈는 잘 막지만 실제
-  이벤트 최고 유사도가 0.876 에 그쳐 정밀도는 중간 — 데이터 더 쌓고 재검토(PROJECT_LOG
-  2026-09-08 A/B 항목).
+  launchd `threatlink` 등록. V034 로 실제 이벤트 12건 추가 후 재실행.
+- **알려진 한계 — 임베딩 모델 한국어 주제 해상도**: `all-MiniLM-L6-v2` 가 "…대응 보고서"
+  산문체 리포트를 주제 일치보다 위로 잡아, `event_threat_matches` 기준 `threat_reports` 커버리지가
+  **7/8**(report 5=피싱 자격증명 탈취 공백). `MIN_SIMILARITY`(0.45)/`TOP_K`(3) 튜닝만으로는
+  못 메움. `threat_reports.related_event_id` 큐레이션 링크는 8/8 존재. 근본 해결은 한국어 특화
+  임베딩 모델 교체. 상세: PROJECT_LOG 2026-09-08 V034 항목.
 
 ### 원본 이벤트 description 백필 — `scripts/backfill_event_descriptions.py`
 
