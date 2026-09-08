@@ -65,6 +65,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V030 | `scan_findings_integration` | KISA 설정취약점 통합: `vulnerabilities.source`/`finding_ref`/`remediation` 컬럼 + `scan_runs` 테이블 + `asset_vulnerabilities.scan_run_id`/`observed_detail` | 1, 4(GRANT). `@migrate:verify`. 데이터는 `import_kisa_results.py` 가 적재 |
 | V031 | `epss_priority_scoring` | EPSS 연동: `nvd_cve_details.epss_*` 컬럼(0~1 CHECK) + `nvd_status` 에 `PENDING` 추가 + `vw_priority_vulnerabilities`(priority = cvss×epss) | **17**(nvd_cve_details). `@migrate:verify`. 데이터는 `epss_sync.py` 가 적재 |
 | V032 | `alert_log` | 실시간 알림 dedup 테이블: `(alert_type, ref_key)` UNIQUE. `alert_poller.py` 가 중복 알림 방지에 사용 | 4(GRANT). `@migrate:verify` |
+| V033 | `event_threat_matching` | 벡터검색-이벤트 연결: `security_events.embedding`(threat_reports 와 동일 차원) + `event_threat_matches`(THREAT_REPORT/PAST_EVENT) + `vw_event_threat_matches` | 2(pgvector/threat_reports), 4(GRANT). `@migrate:verify`. 데이터는 `event_threat_linker.py` 가 채움 |
 
 각 그룹(V018~20, V021~26)은 대체로 상호 독립이며 표 순서가 자연스럽다.
 V021(search_path)은 V022(EXECUTE 회수)보다 먼저 — 함수 정의를 만지므로.
@@ -194,15 +195,48 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
   문구에 `[SIM]` 표기(`ALERT_INCLUDE_SIM=0` 으로 제외 가능).
 - `verify_audit_chain.sh` 는 ALERT(exit 2) 시 `alert_poller.py --source audit` 를 호출한다(같은 dedup 경유).
 
-## 자동 스케줄 (launchd) — 등록 완료 (2026-09-07)
+### 유사 사례 자동 매칭 — `event_threat_linker.py` (V033)
 
-프로젝트를 `~/security_db_project` 로 옮긴 뒤 아래 **다섯 개** LaunchAgent 가 정상 등록·실행됨
+기존 벡터검색(`generate_embeddings.py` + `search_similar_reports.py`)은 threat_reports 에만
+임베딩이 있어서 "사람이 검색어를 입력"해야 유사 사례를 찾을 수 있었다. `event_threat_linker.py`
+는 이를 `security_events` 인입 파이프라인에 붙인다.
+
+- **1단계 임베딩**: `security_events.description IS NOT NULL AND embedding IS NULL` 인 행을
+  threat_reports 와 동일 모델(all-MiniLM-L6-v2, 384차원)로 임베딩 → 같은 벡터 공간이라
+  코사인 거리(`<=>`)로 직접 비교 가능.
+- **2단계 매칭**: 아직 해당 `match_type` 을 시도하지 않은 이벤트(`NOT EXISTS` 체크)마다
+  - `THREAT_REPORT`: threat_reports 중 유사도 상위 TOP_K(3), `MIN_SIMILARITY`(0.45, 튜닝 가능) 이상만
+  - `PAST_EVENT`: 이미 임베딩된 다른 security_events(자기 자신 제외) 중 유사도 상위 TOP_K, 임계값 이상만
+  `event_threat_matches` 에 저장.
+- **재실행 안전**: "아직 그 match_type 을 시도 안 한 이벤트"만 대상으로 삼는 것 + `(event_id, match_type,
+  대상)` UNIQUE 인덱스(`uq_etm_dedup`, `matched_report_id`/`matched_event_id` 는 `COALESCE(-1)` 로 감싸
+  NULL 이 서로 다른 값 취급되는 걸 피함) + `ON CONFLICT DO NOTHING` 이중 방어.
+- **왜 재계산이 아니라 저장인가**: alert_log/scan_runs 와 같은 이유 — 대시보드가 매 새로고침마다
+  벡터 유사도를 다시 계산할 필요가 없고, threat_reports 가 나중에 늘어나면 같은 이벤트라도 새 매칭
+  행이 추가되는 이력이 남는다.
+- **대시보드**: `soc_dashboard.py` 섹션 i (`vw_event_threat_matches`, 유사도순 상위 30건, SIM 필터 연동).
+- **미실행 상태**: 마이그레이션(V033)·스크립트·대시보드 섹션·launchd plist 는 작성 완료. 실제 DB 적용
+  (`migrate.py up`)과 `event_threat_linker.py` 첫 실행, `MIN_SIMILARITY` 값 검증은 아직 이 세션에서
+  수행하지 못했다 — 로컬 터미널에서 아래 순서로 직접 확인 필요.
+
+  ```
+  python3 scripts/migrate.py status              # V033 이 pending 인지 확인
+  python3 scripts/migrate.py up                  # 적용 + 검증절 실행
+  python3 scripts/event_threat_linker.py --dry-run   # 임베딩/매칭 미리보기
+  python3 scripts/event_threat_linker.py             # 실제 반영
+  streamlit run scripts/soc_dashboard.py         # 섹션 i 확인
+  ```
+
+## 자동 스케줄 (launchd) — 등록 완료 (threatlink 는 2026-09-08 추가)
+
+프로젝트를 `~/security_db_project` 로 옮긴 뒤 아래 **여섯 개** LaunchAgent 가 정상 등록·실행됨
 (`launchctl start` → 전부 **exit 0** 확인).
 
 | plist (scripts/) | Label | 주기 | 하는 일 | 실행 로그 |
 |---|---|---|---|---|
 | `com.security-db.backup.plist` | `com.security-db.backup` | 매일 03:30 | `pg_dump --format=custom` → `db_backups/` + `pg_dumpall --roles-only` → `roles_<ts>.sql`, 14일/7개 보존정책 | `db_backups/backup.log` (+ `~/Library/Logs/security-db-backup.{out,err}.log`) |
 | `com.security-db.synth.plist` | `com.security-db.synth` | 25분마다 | `generate_synthetic_events.py` 로 합성 이벤트 1~3건 생성 | `~/Library/Logs/security-db-synth.{out,err}.log` |
+| `com.security-db.threatlink.plist` | `com.security-db.threatlink` | **10분 주기** (`StartInterval 600`) | `event_threat_linker.py` — 신규 `security_events` 임베딩 채우기 + `threat_reports`/과거 이벤트 코사인 유사도 자동 매칭 (`event_threat_matches`). synth(25분)보다 촘촘하게 잡아 신규 이벤트를 놓치지 않음 | `~/Library/Logs/security-db-threatlink.{out,err}.log` |
 | `com.security-db.auditverify.plist` | `com.security-db.auditverify` | 매일 04:00 | `verify_audit_chain.sh` — `fn_verify_audit_chain()` 실행, breaks>0 이면 `*** ALERT ***` 기록 + `alert_poller.py --source audit` 호출 + exit 2 | `logs/audit_verify.log` |
 | `com.security-db.epsssync.plist` | `com.security-db.epsssync` | 매일 05:00 | `epss_sync.py` — FIRST.org EPSS 재동기화 (EPSS 값은 매일 갱신) | `~/Library/Logs/security-db-epsssync.{out,err}.log` |
 | `com.security-db.alertpoll.plist` | `com.security-db.alertpoll` | **2분 주기** (`StartInterval 120`) | `alert_poller.py` — 최근 2h CRITICAL 이벤트 + 감사체인 손상 폴링 → `alert_notifier` 발송 (`alert_log` dedup) | `~/Library/Logs/security-db-alertpoll.{out,err}.log` |
@@ -210,37 +244,48 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 ### 등록 / 해제 / 확인
 
 ```
-# 등록 (다섯 개)
+# 등록 (여섯 개)
 cp scripts/com.security-db.*.plist ~/Library/LaunchAgents/
-for j in backup synth auditverify epsssync alertpoll; do launchctl load ~/Library/LaunchAgents/com.security-db.$j.plist; done
+for j in backup synth threatlink auditverify epsssync alertpoll; do launchctl load ~/Library/LaunchAgents/com.security-db.$j.plist; done
 
 # 스케줄이 살아있는지 확인 (가운데 숫자 = 마지막 종료코드, 0 이면 정상)
 launchctl list | grep security-db
 
 # 즉시 1회 실행
-for j in backup synth auditverify epsssync alertpoll; do launchctl start com.security-db.$j; done
+for j in backup synth threatlink auditverify epsssync alertpoll; do launchctl start com.security-db.$j; done
 
 # 로그 확인
 tail -f db_backups/backup.log
 tail -f logs/audit_verify.log
 tail -f ~/Library/Logs/security-db-synth.out.log
+tail -f ~/Library/Logs/security-db-threatlink.out.log
 tail -f ~/Library/Logs/security-db-alertpoll.out.log
 tail -f logs/alerts.log            # 알림 발송 이력 (모든 채널)
 
 # 해제
-for j in backup synth auditverify epsssync alertpoll; do launchctl unload ~/Library/LaunchAgents/com.security-db.$j.plist; done
+for j in backup synth threatlink auditverify epsssync alertpoll; do launchctl unload ~/Library/LaunchAgents/com.security-db.$j.plist; done
 rm ~/Library/LaunchAgents/com.security-db.*.plist
 ```
 
 주의:
-- `com.security-db.{synth,epsssync,alertpoll}.plist` 의 `ProgramArguments` 는 **psycopg2(+requests) 가 설치된
-  인터프리터**(`/Users/summer/opt/anaconda3/bin/python3`)를 가리킨다. `which python3` 결과가 다르면 맞춰야 한다.
+- `com.security-db.{synth,threatlink,epsssync,alertpoll}.plist` 의 `ProgramArguments` 는 **psycopg2(+requests,
+  그리고 threatlink 는 sentence-transformers)가 설치된 인터프리터**(`/Users/summer/opt/anaconda3/bin/python3`)를
+  가리킨다. `which python3` 결과가 다르면 맞춰야 한다. threatlink `.err.log` 에는 anaconda numpy 1.24 ↔ scipy
+  버전 불일치 `UserWarning` 한 줄이 남지만 동작에는 영향 없음(임베딩 라이브러리는 numpy 만 사용).
 - `alertpoll` 은 macOS 네이티브 알림이 기본. `EnvironmentVariables` 에 `SLACK_WEBHOOK_URL` /
   `ALERT_SMTP_*` 를 넣으면 해당 채널도 자동 시도한다. `ALERT_INCLUDE_SIM=0` 이면 `[SIM]` CRITICAL 은 알림 제외.
 - `epss_sync` 가 만든 `nvd_status='PENDING'` 행은 `nvd_sync.py` 실행 시 SYNCED 로 정리된다
   (정기화하려면 05:00 잡 앞에 `nvd_sync.py` 도 등록).
 - 25분 주기면 하루 약 100~150건이 쌓인다. 데모 기간에만 `load`, 끝나면 `unload` 하거나
   `ProgramArguments` 에 `--count 1` 을 추가해 볼륨을 줄일 수 있다.
+
+### threatlink 등록 이력 (2026-09-08)
+
+V033 마이그레이션 적용 + `event_threat_linker.py` 첫 실행을 확인한 뒤 여섯 번째 잡으로 등록함.
+`launchctl load` → `launchctl start` → `launchctl list | grep security-db` 결과 가운데 숫자 **0**
+(exit 0) 확인. 첫 launchd 실행 로그: 신규 임베딩 9건 · THREAT_REPORT 매칭 12건 · PAST_EVENT 매칭
+27건 추가 → `event_threat_matches` 누적 THREAT_REPORT 52건 / PAST_EVENT 99건. `.err.log` 은 위
+"주의" 의 numpy/scipy `UserWarning` 한 줄뿐.
 
 ## 운영 검증 (2026-09-07 수행)
 

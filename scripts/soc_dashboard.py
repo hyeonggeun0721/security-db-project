@@ -260,6 +260,59 @@ try:
 except Exception as ex:
     st.warning(f"audit_log 조회 불가: {ex}")
 
+st.divider()
+
+# --------------------------------------------- i. 자동 유사 사례 매칭 (event_threat_matches)
+st.subheader("i. 유사 사례 자동 매칭 (threat_reports / 과거 이벤트)")
+st.caption("event_threat_linker.py 가 security_events.description 을 threat_reports·과거 이벤트와 "
+           "임베딩 코사인 유사도로 자동 매칭해 event_threat_matches 에 저장한 결과. "
+           "'이 사건, 예전에 봤던 패턴과 비슷한가?' 를 사람이 검색어를 입력하지 않아도 보여준다. "
+           "PAST_EVENT 유사도가 THREAT_REPORT 보다 구조적으로 높게 나오는 경향이 있어(같은 이벤트 "
+           "카탈로그 안에서 비교하므로) 두 종류를 각자 상위 N건으로 나눠서 보여준다 — 합쳐서 정렬하면 "
+           "THREAT_REPORT 가 밀려서 안 보일 수 있기 때문.")
+
+
+def _etm_query(match_type, limit):
+    return q(f"""
+        SELECT m.event_id, e.detected_at, e.severity AS event_severity,
+               left(coalesce(e.description,''), 60) AS event_description,
+               CASE WHEN m.match_type = 'THREAT_REPORT' THEN m.matched_report_title
+                    ELSE left(coalesce(m.matched_event_description,''), 60) END AS matched_with,
+               round(m.similarity, 3) AS similarity
+        FROM vw_event_threat_matches m
+        JOIN security_events e ON e.event_id = m.event_id
+        {_EVT_W}{" AND" if _EVT_W else " WHERE"} m.match_type = '{match_type}'
+        ORDER BY m.similarity DESC
+        LIMIT {limit}
+    """)
+
+
+try:
+    df_report = _etm_query("THREAT_REPORT", 15)
+    df_past = _etm_query("PAST_EVENT", 15)
+
+    if df_report.empty and df_past.empty:
+        st.info("아직 저장된 매칭이 없습니다. `python3 scripts/event_threat_linker.py` 를 먼저 실행하세요 "
+                "(launchd 로 자동화하려면 `com.security-db.threatlink.plist`, 10분 주기).")
+    else:
+        st.markdown("**i-1. THREAT_REPORT** — 과거 위협 인텔리전스 리포트와의 매칭")
+        if df_report.empty:
+            st.caption("매칭 없음 (임계값 미만이거나 threat_reports 와 무관한 이벤트뿐).")
+        else:
+            show(df_report, use_container_width=True, height=300, hide_index=True)
+            st.caption(f"상위 {len(df_report)}건 (유사도순)")
+
+        st.markdown("**i-2. PAST_EVENT** — 이미 임베딩된 다른 이벤트와의 매칭 (반복/유사 패턴 탐지)")
+        if df_past.empty:
+            st.caption("매칭 없음.")
+        else:
+            show(df_past, use_container_width=True, height=300, hide_index=True)
+            st.caption(f"상위 {len(df_past)}건 (유사도순) · 유사도 0.9+ 는 서로 다른 자산에서 같은 "
+                       "공격 패턴/문구가 반복됐다는 신호일 수 있음(합성 데이터라면 템플릿 재사용 가능성도 있음).")
+except Exception as ex:
+    st.warning(f"event_threat_matches 조회 불가 (V033 마이그레이션 적용 여부 확인): {ex}")
+st.divider()
+
 # ------------------------------------------- 부록. NVD 신규 CVE 워치 후보
 with st.expander("부록 · NVD 신규 CVE 워치 후보 (nvd_watch_candidates)"):
     try:

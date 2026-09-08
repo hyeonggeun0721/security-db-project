@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.security-db.threatlink</string>
+
+    <!-- sentence-transformers + psycopg2 가 있는 인터프리터 (generate_embeddings.py 와 동일) -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/summer/opt/anaconda3/bin/python3</string>
+        <string>/Users/summer/security_db_project/scripts/event_threat_linker.py</string>
+    </array>
+
+    <!-- 10분 주기: synth 합성 이벤트(25분 주기)보다 촘촘하게 잡아 신규 이벤트를 놓치지 않음 -->
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PGDATABASE</key>
+        <string>security_db</string>
+        <key>PATH</key>
+        <string>/Users/summer/opt/anaconda3/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/summer/Library/Logs/security-db-threatlink.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/summer/Library/Logs/security-db-threatlink.err.log</string>
+</dict>
+</plist>

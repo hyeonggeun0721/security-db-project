@@ -9,15 +9,16 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST_
+_최종 갱신: 2026-09-08 KST (V033 launchd 등록 + schema_dump 재생성)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
-- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V032__*.sql`** 적용.
-  `migrate.py status` → **적용됨 32 · 미적용 0 · drift 0**
+- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V033__*.sql`** 적용.
+  `migrate.py status` → **적용됨 33 · 미적용 0 · drift 0**
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
-- **Git 관리 중**: 2026-09-08 저장소 초기화, 단계별 커밋 히스토리 재구성(14 커밋).
-  이제부터 매 작업 라운드 종료 시 `git add -A && git commit` (+ `git push`) 를 기본으로 한다.
+- **Git 관리 중**: 2026-09-08 저장소 초기화 + 단계별 커밋 히스토리 재구성 후
+  **GitHub 비공개 저장소 연결 완료**(`origin` → `github.com/hyeonggeun0721/security-db-project`).
+  매 작업 라운드 종료 시 `git add -A && git commit && git push origin main` 을 기본으로 한다.
   대용량/자격증명은 `.gitignore` 로 제외(`db_backups/`, `logs/`, `*.dump`, `.env*`, `*.pem/key`, `__pycache__`).
 
 ### 완료된 항목 (누적)
@@ -38,26 +39,35 @@ _최종 갱신: 2026-09-08 KST_
 - **실시간 알림/에스컬레이션(V032)**: `alert_notifier.py`(macOS/Slack/이메일 다채널 + `logs/alerts.log`) +
   `alert_poller.py`(폴링, launchd 2분). 소스 (a) 최근 2h CRITICAL `security_events`([SIM] 포함, 문구 표기),
   (b) 감사체인 손상. `alert_log(alert_type, ref_key)` UNIQUE 로 **중복 알림 방지**.
+- **벡터검색 ↔ 이벤트 자동 매칭(V033)**: `security_events.embedding VECTOR(384)`(+ HNSW) 추가 →
+  `event_threat_linker.py` 가 신규 이벤트 임베딩을 채우고 `threat_reports`/과거 이벤트와 코사인
+  유사도 매칭을 `event_threat_matches`(`match_type` = `THREAT_REPORT` | `PAST_EVENT`, `uq_etm_dedup`
+  + `ON CONFLICT DO NOTHING`)에 적재. 조회용 `vw_event_threat_matches`. SOC 대시보드 섹션 i 를
+  i-1(THREAT_REPORT)/i-2(PAST_EVENT) 로 분리 — 유사도 스케일이 다른 두 종류가 서로를 밀어내지 않도록.
+  launchd `com.security-db.threatlink` 10분 주기로 등록.
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
 
-### 자동 스케줄 (launchd) — **5종** 모두 등록·`exit 0`
+### 자동 스케줄 (launchd) — **6종** 모두 등록·`exit 0`
 | Label | 주기 | 스크립트 | 로그 |
 |---|---|---|---|
 | `com.security-db.backup` | 매일 03:30 | `backup_scheduled.sh` (DB 덤프 + `pg_dumpall --roles-only`, 14일/7개 보존) | `db_backups/backup.log` |
 | `com.security-db.synth` | 25분마다 | `generate_synthetic_events.py` (합성 이벤트 1~3건) | `~/Library/Logs/security-db-synth.*.log` |
+| `com.security-db.threatlink` | **10분마다** | `event_threat_linker.py` (신규 이벤트 임베딩 + `event_threat_matches` 자동 매칭) | `~/Library/Logs/security-db-threatlink.*.log` |
 | `com.security-db.auditverify` | 매일 04:00 | `verify_audit_chain.sh` (해시체인 점검, breaks>0 시 ALERT + `alert_poller --source audit`) | `logs/audit_verify.log` |
 | `com.security-db.epsssync` | 매일 05:00 | `epss_sync.py` (FIRST.org EPSS 재동기화) | `~/Library/Logs/security-db-epsssync.*.log` |
 | `com.security-db.alertpoll` | **2분 주기** | `alert_poller.py` (CRITICAL 이벤트 + 감사체인 폴링 → 알림) | `~/Library/Logs/security-db-alertpoll.*.log` · `logs/alerts.log` |
 
-확인: `launchctl list | grep security-db` (가운데 숫자 = 마지막 종료코드, 0=정상)
+확인: `launchctl list | grep security-db` (가운데 숫자 = 마지막 종료코드, 0=정상) — 2026-09-08 6종 전부 0.
+`threatlink.err.log` 은 anaconda numpy/scipy `UserWarning` 한 줄뿐(무해).
 
-### 라이브 DB 상태값 (2026-09-07 22:30)
-- `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 17 / 뷰 7**
+### 라이브 DB 상태값 (2026-09-08)
+- `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 18 / 뷰 8**
 - `nvd_cve_details` 14행: EPSS 채워짐 12 / nvd_status **SYNCED 12 · NOT_FOUND 2** (PENDING 은 `nvd_sync.py` 로 정리 완료)
-- `security_events` 45건 (그중 `[SIM]` 16) · `responses` 26건 · `audit_log` 50건 · **`alert_log` 1건**(테스트 알림 이력)
-- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 32** · FK 14 · CHECK 17
+- `security_events` 63건 (그중 `[SIM]` 33, `embedding` 채워짐 33) · `audit_log` 100건 · **`alert_log` 2건**(테스트 알림 이력)
+- **`event_threat_matches` 151행 — THREAT_REPORT 52 / PAST_EVENT 99** (`threatlink` 10분 주기가 계속 증분 적재)
+- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 33** · FK 17 · CHECK 23
 - `vw_priority_vulnerabilities` 12건, 그중 `epss_over_cvss=TRUE` **1건 = CVE-2021-26085**(CVSS 5.3 MEDIUM, EPSS 백분위 1.000)
 - 예시 MANUAL 2건: CVE-2021-26085(사용자포털), CVE-2020-3452(방화벽-메인) — 실제 '낮은 CVSS/높은 EPSS' 시연용
 - `[SIM]` 데이터는 `description`/`action_taken` 접두사로 구분, `svc_event_ingest` RLS 가 태그 강제
@@ -368,3 +378,98 @@ gh repo create security-db-project --private --source=. --remote=origin --push
 - `RUN_ORDER.md`: 「자동 스케줄 (launchd)」 를 3종으로 갱신 + 「운영 검증」 섹션 추가.
 - `.gitignore`: `logs/` 추가.
 - launchd `com.security-db.synth` 는 복구 드릴 중 unload 했다가 작업 종료 시 재등록(현재 exit 0).
+
+---
+
+### 2026-09-08 11:33 KST — 벡터검색 <-> 이벤트 파이프라인 연결 (V033) — 적용/실행/검증 완료
+
+지금까지 pgvector 유사검색(V002, `threat_reports`)과 이벤트 파이프라인(`security_events`)이
+서로 연결돼 있지 않았다 — "검색어를 사람이 입력"해야만 과거 사례를 찾을 수 있었다. 이번 작업으로
+그 둘을 잇는 자동 매칭 기능을 설계·구현하고, 로컬에서 `migrate.py up` → `event_threat_linker.py`
+→ `streamlit run soc_dashboard.py` 순으로 실제 적용/실행까지 완료했다.
+
+#### 1. 스키마 — `sql/V033__event_threat_matching.sql`
+- `security_events.embedding VECTOR(384)` 추가 (threat_reports 와 동일 모델/차원 → 코사인 거리로
+  직접 비교) + HNSW 인덱스(`idx_security_events_embedding_hnsw`).
+- `event_threat_matches` 테이블: `match_type` (`THREAT_REPORT` | `PAST_EVENT`) 로 두 매칭 대상을
+  한 테이블에 통합(alert_log 가 alert_type 으로 두 소스 합친 것과 동일 패턴). `chk_etm_target` 으로
+  match_type 별 필수 컬럼 강제 + 자기자신 매칭 차단. `uq_etm_dedup`(COALESCE(-1) 로 NULL 처리) +
+  `ON CONFLICT DO NOTHING` 으로 재실행 시 중복 저장 방지.
+- `vw_event_threat_matches`: 이벤트/리포트/과거이벤트 정보를 미리 조인한 조회용 뷰.
+- GRANT: `alert_log`/`scan_runs` 패턴 그대로 — SELECT 는 3개 role 전부, INSERT 는 security_admin.
+- `migrate.py up` 적용 결과: **ok (0.063s)**. `@migrate:verify` 전부 기대대로 — dedup 테스트
+  1행→0행, CHECK 위반 2종(대상 컬럼 오조합 / 자기자신 매칭) 모두 에러로 거부, 적용 직후
+  `vw_event_threat_matches` 0건(정상 - 아직 linker 실행 전).
+
+#### 2. 적재 스크립트 — `scripts/event_threat_linker.py` 실행 결과
+- `--dry-run` 먼저 확인 후 실제 실행. **신규 임베딩 24건**(event_id 41~65, 결번 59) ·
+  **THREAT_REPORT 매칭 40건** · **PAST_EVENT 매칭 72건**.
+- THREAT_REPORT 유사도는 대체로 0.46~0.60 대 — report_id=2(내부 DB 접근제어 우회)·
+  4(방화벽 커널 권한상승)·7(클라우드 버킷 오설정)에 매칭이 몰림. 4건(43,44,51,58,64,65)은
+  임계값(0.45) 미만이라 매칭 없음(정상 동작 - 무관한 이벤트를 억지로 안 붙임).
+- **PAST_EVENT 유사도가 예상보다 높게 나옴**(다수 0.85~0.97). event_id 41~65 는 이 세션 이전에
+  `synth`(합성 이벤트, 25분 주기) 이 쌓은 구간과 겹쳐 보인다 — 합성 이벤트 생성기의 문구 템플릿
+  풀이 제한적이라 서로 거의 같은 문장이 나왔을 가능성이 큼(확정은 아니고, 소스 문구 직접 대조는
+  아직 안 함). **완화책**: 대시보드 섹션 i 가 기존 SIM 필터(`_EVT_W`)를 그대로 재사용하므로
+  `합성 데이터 포함 보기` 가 기본 OFF 인 상태에서는 이 노이즈가 자동으로 걸러진다. 순수 실제
+  이벤트 기준 PAST_EVENT 매칭 품질은 다음에 SIM 제외하고 다시 확인할 것.
+- `MIN_SIMILARITY`=0.45 는 이번 결과 기준으로는 THREAT_REPORT 쪽 노이즈 없이 잘 작동하는 것으로
+  보임(관련 없는 이벤트는 실제로 매칭 안 됨). 추가 데이터 쌓이면 재점검.
+
+#### 3. 대시보드 — `scripts/soc_dashboard.py` 섹션 i (렌더링 확인 + 재설계)
+- 1차 버전(THREAT_REPORT/PAST_EVENT 합쳐서 유사도순 상위 30건)으로 렌더링 확인한 결과, 기본값
+  (합성데이터 제외 OFF)에서는 "매칭 없음"으로 보였다 — 원인: 지금까지 description 이 채워진
+  이벤트가 전부 `[SIM]` 합성 이벤트(event_id 41~65)뿐이라, SIM 필터에 전부 걸러진 것
+  (버그 아님, 큐레이션된 원본 이벤트 1~40 은애초에 description 이 NULL 이라 임베딩 대상이 아니었음).
+- SIM 필터를 켜고 확인한 결과, **표는 정상 동작** — 다만 상위 30건이 전부 PAST_EVENT 로 채워지고
+  THREAT_REPORT(40건 존재)는 한 건도 안 보임: PAST_EVENT 유사도(0.85~0.97)가 THREAT_REPORT
+  유사도(0.46~0.60)보다 구조적으로 훨씬 높아서, 하나로 합쳐 정렬하면 THREAT_REPORT 가 전부 밀려남.
+- **흥미로운 발견**: 실제로 뜬 PAST_EVENT 매칭들을 보니 — 예) event_id 41 "VPN게이트웨이 에서
+  알려진 악성 IOC 도메인 접속 시도" ↔ event_id 57 "방화벽-메인 에서 알려진 악성 IOC 도메인 접속
+  시도" (sim=0.974), event_id 48 "피싱 의심 첨부(.html) 3건 자동 격리" ↔ event_id 56 "...5건..."
+  (sim=0.972) — **서로 다른 자산에서 같은 문구/패턴이 반복**되고 있음을 정확히 잡아낸 것.
+  `generate_synthetic_events.py` 의 문구 템플릿이 자산명만 바꿔 재사용되는 구조라 그런 것으로
+  보이지만(원인 확정은 자산명 슬롯 채우는 템플릿 소스 확인까지는 안 함), 임베딩 모델 자체는
+  "거의 같은 문장"을 정확히 높은 유사도로 잡아낸 것이라 **기능은 의도대로 동작**한 것으로 판단.
+  실제 SOC 맥락으로 치환하면 "여러 자산에 걸쳐 같은 공격 캠페인/기법이 반복되고 있다"를 자동으로
+  잡아주는 것과 같은 신호라 오히려 긍정적인 사례.
+- **수정**: THREAT_REPORT/PAST_EVENT 를 합쳐서 정렬하지 않고 **각자 상위 15건으로 분리**
+  (i-1/i-2 서브섹션, `vw_cvss_severity_mismatch`/`nvd_mismatch` 의 e-1/e-2 패턴과 동일)해서 —
+  유사도 크기가 다른 두 매칭 종류가 서로를 밀어내지 않도록 재설계. 재확인은 다음 렌더링 때.
+
+#### 4. launchd — 등록 완료 (2026-09-08) — `scripts/com.security-db.threatlink.plist`
+- 10분 주기(`StartInterval 600`, synth 25분보다 촘촘). 기존 5개와 같은 형식(anaconda python3,
+  `PGDATABASE` 환경변수, 로그 경로).
+- `cp` → `launchctl load` (rc 0) → `launchctl start` (rc 0) → `launchctl list | grep security-db`
+  결과 `com.security-db.threatlink` **가운데 숫자 0 (exit 0)** 확인. 이제 여섯 개 잡 전부 exit 0.
+- 첫 launchd 실행(`launchctl start`)이 그 사이 synth 가 쌓은 신규 이벤트를 처리:
+  `~/Library/Logs/security-db-threatlink.out.log` 마지막 줄 = **"완료: 신규 임베딩 9건 ·
+  THREAT_REPORT 매칭 12건 · PAST_EVENT 매칭 27건."** → `event_threat_matches` 누적
+  **THREAT_REPORT 52건 / PAST_EVENT 99건 (총 151행)**, `security_events` 임베딩 커버리지 33/63
+  (나머지는 다음 10분 주기에 순차 처리).
+- `.err.log` (266 bytes): anaconda `numpy 1.24.4` ↔ `scipy` 버전 불일치 `UserWarning` **한 줄뿐**,
+  기능 영향 없음(임베딩 경로는 numpy 만 사용, out.log 는 정상 완료). 실패·트레이스백 없음.
+
+#### 5. schema_dump.sql 재생성 (2026-09-08)
+- `pg_dump -d security_db --schema-only --no-owner > sql/schema_dump.sql` 실행.
+- 줄 수 **3213 → 3397 (+184)**.
+- `grep` 로 V033 신규 오브젝트 3종 반영 확인:
+  · `security_events.embedding public.vector(384)` (컬럼 + `COMMENT` + `idx_security_events_embedding_hnsw`)
+  · `CREATE TABLE public.event_threat_matches` (+ `_match_type_check` / `_similarity_check` CHECK, PK, 시퀀스)
+  · `CREATE VIEW public.vw_event_threat_matches` (+ 3개 role 대상 `GRANT SELECT`, security_admin `GRANT ALL`)
+
+#### 6. 남은 할 일
+- ~~대시보드 섹션 i 렌더링 확인~~ → 이번 세션에서 i-1/i-2 분리 버전 렌더링 확인 완료(사용자).
+- ~~threatlink 등록~~ / ~~schema_dump.sql 재생성~~ → 완료(위 4·5).
+- PAST_EVENT 고유사도가 진짜 합성 이벤트 템플릿 반복 때문인지 `generate_synthetic_events.py` 문구
+  템플릿 소스 직접 대조 (아직 미확인).
+- 순수 실제(비-SIM) 이벤트 기준 PAST_EVENT 매칭 품질 재확인 — 현재는 description 이 채워진
+  이벤트가 전부 `[SIM]` 이라 SIM 제외 시 표본이 없음. 큐레이션 원본 이벤트(1~40)에 description
+  백필하거나 실데이터가 더 쌓인 뒤 재점검.
+
+#### 부수 변경
+- `RUN_ORDER.md`: 순서·의존성 표에 V033 행, 「유사 사례 자동 매칭」 섹션 추가. launchd 섹션은
+  이번에 "다섯 개 → 여섯 개", threatlink 를 메인 표로 이동(별도 "미등록" 하위 절 제거),
+  등록/해제 `for` 문 리스트에 `threatlink` 추가, numpy/scipy 경고 주석 추가, threatlink 등록
+  이력 절 추가로 갱신.
+- `sql/schema_dump.sql`: 위 5번대로 재생성.

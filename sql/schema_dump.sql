@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict B8VbOjfHSaVolqqL2rtkPDG9Tug4odG0yKAaw0QGaaKiVdj00owxVI65wduXuxH
+\restrict PdTy5Cy283AVry7OSGVteJ7udmWbEAO0BDh2reRpkMPesXgaXvUcP76MmiyIqy7
 
 -- Dumped from database version 15.19 (Homebrew)
 -- Dumped by pg_dump version 15.19 (Homebrew)
@@ -628,6 +628,57 @@ COMMENT ON TABLE public.departments IS '부서 마스터. assets/staff/rls_role_
 
 
 --
+-- Name: event_threat_matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_threat_matches (
+    match_id bigint NOT NULL,
+    event_id integer NOT NULL,
+    match_type character varying(13) NOT NULL,
+    matched_report_id integer,
+    matched_event_id integer,
+    similarity numeric(5,4) NOT NULL,
+    matched_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_etm_target CHECK (((((match_type)::text = 'THREAT_REPORT'::text) AND (matched_report_id IS NOT NULL) AND (matched_event_id IS NULL)) OR (((match_type)::text = 'PAST_EVENT'::text) AND (matched_event_id IS NOT NULL) AND (matched_report_id IS NULL) AND (matched_event_id <> event_id)))),
+    CONSTRAINT event_threat_matches_match_type_check CHECK (((match_type)::text = ANY ((ARRAY['THREAT_REPORT'::character varying, 'PAST_EVENT'::character varying])::text[]))),
+    CONSTRAINT event_threat_matches_similarity_check CHECK (((similarity >= (0)::numeric) AND (similarity <= (1)::numeric)))
+);
+
+
+--
+-- Name: TABLE event_threat_matches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.event_threat_matches IS 'security_events.description 임베딩과 threat_reports/과거 security_events 임베딩 간 코사인 유사도 자동 매칭 결과. scripts/event_threat_linker.py 가 채움(수동 UPDATE 대상 아님).';
+
+
+--
+-- Name: COLUMN event_threat_matches.similarity; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.event_threat_matches.similarity IS '1 - 코사인거리(<=>). 1.0 에 가까울수록 유사. MIN_SIMILARITY(event_threat_linker.py) 미만은 저장 안 함.';
+
+
+--
+-- Name: event_threat_matches_match_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.event_threat_matches_match_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: event_threat_matches_match_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.event_threat_matches_match_id_seq OWNED BY public.event_threat_matches.match_id;
+
+
+--
 -- Name: event_types; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -989,6 +1040,7 @@ CREATE TABLE public.security_events (
     detected_at timestamp with time zone DEFAULT now() NOT NULL,
     status character varying(15) DEFAULT 'OPEN'::character varying NOT NULL,
     description text,
+    embedding public.vector(384),
     CONSTRAINT security_events_severity_check CHECK (((severity)::text = ANY ((ARRAY['LOW'::character varying, 'MEDIUM'::character varying, 'HIGH'::character varying, 'CRITICAL'::character varying])::text[]))),
     CONSTRAINT security_events_status_check CHECK (((status)::text = ANY ((ARRAY['OPEN'::character varying, 'IN_PROGRESS'::character varying, 'RESOLVED'::character varying])::text[])))
 );
@@ -999,6 +1051,13 @@ CREATE TABLE public.security_events (
 --
 
 COMMENT ON COLUMN public.security_events.description IS '이벤트 상세 메모(자유 텍스트). ''[SIM] '' 접두사 = 합성/시뮬레이션 데이터(실사건 아님).';
+
+
+--
+-- Name: COLUMN security_events.embedding; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.security_events.embedding IS 'description 텍스트 임베딩(all-MiniLM-L6-v2, 384차원). scripts/event_threat_linker.py 가 채움. threat_reports.embedding 과 동일 모델/차원 -> 코사인 거리(<=>)로 직접 비교 가능. description 이 NULL 이거나 아직 처리 전이면 NULL.';
 
 
 --
@@ -1247,6 +1306,39 @@ COMMENT ON VIEW public.vw_cvss_severity_mismatch IS 'CVSS 점수로 산출한 �
 
 
 --
+-- Name: vw_event_threat_matches; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.vw_event_threat_matches AS
+ SELECT m.match_id,
+    m.event_id,
+    e.description AS event_description,
+    e.severity AS event_severity,
+    e.detected_at AS event_detected_at,
+    m.match_type,
+    m.similarity,
+    m.matched_report_id,
+    tr.title AS matched_report_title,
+    tr.report_date AS matched_report_date,
+    m.matched_event_id,
+    pe.description AS matched_event_description,
+    pe.severity AS matched_event_severity,
+    pe.detected_at AS matched_event_detected_at,
+    m.matched_at
+   FROM (((public.event_threat_matches m
+     JOIN public.security_events e ON ((e.event_id = m.event_id)))
+     LEFT JOIN public.threat_reports tr ON ((tr.report_id = m.matched_report_id)))
+     LEFT JOIN public.security_events pe ON ((pe.event_id = m.matched_event_id)));
+
+
+--
+-- Name: VIEW vw_event_threat_matches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.vw_event_threat_matches IS 'event_threat_matches 를 대상(threat_reports/과거 security_events) 정보와 조인한 조회 편의 뷰. soc_dashboard.py 섹션 i 가 사용.';
+
+
+--
 -- Name: vw_open_high_risk_events; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -1317,6 +1409,13 @@ ALTER TABLE ONLY public.assets ALTER COLUMN asset_id SET DEFAULT nextval('public
 --
 
 ALTER TABLE ONLY public.audit_log ALTER COLUMN audit_id SET DEFAULT nextval('public.audit_log_audit_id_seq'::regclass);
+
+
+--
+-- Name: event_threat_matches match_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_threat_matches ALTER COLUMN match_id SET DEFAULT nextval('public.event_threat_matches_match_id_seq'::regclass);
 
 
 --
@@ -1399,6 +1498,14 @@ ALTER TABLE ONLY public.audit_log
 
 ALTER TABLE ONLY public.departments
     ADD CONSTRAINT departments_pkey PRIMARY KEY (dept_name);
+
+
+--
+-- Name: event_threat_matches event_threat_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_threat_matches
+    ADD CONSTRAINT event_threat_matches_pkey PRIMARY KEY (match_id);
 
 
 --
@@ -1549,6 +1656,20 @@ CREATE INDEX idx_audit_log_table_time ON public.audit_log USING btree (table_nam
 
 
 --
+-- Name: idx_etm_event_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_etm_event_id ON public.event_threat_matches USING btree (event_id);
+
+
+--
+-- Name: idx_etm_similarity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_etm_similarity ON public.event_threat_matches USING btree (similarity DESC);
+
+
+--
 -- Name: idx_responses_event_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1574,6 +1695,13 @@ CREATE INDEX idx_security_events_asset_id ON public.security_events USING btree 
 --
 
 CREATE INDEX idx_security_events_asset_id_detected_at ON public.security_events USING btree (asset_id, detected_at);
+
+
+--
+-- Name: idx_security_events_embedding_hnsw; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_security_events_embedding_hnsw ON public.security_events USING hnsw (embedding public.vector_cosine_ops);
 
 
 --
@@ -1623,6 +1751,13 @@ CREATE UNIQUE INDEX mv_asset_risk_score_pk ON public.mv_asset_risk_score USING b
 --
 
 CREATE INDEX threat_reports_embedding_idx ON public.threat_reports USING hnsw (embedding public.vector_cosine_ops);
+
+
+--
+-- Name: uq_etm_dedup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_etm_dedup ON public.event_threat_matches USING btree (event_id, match_type, COALESCE(matched_report_id, '-1'::integer), COALESCE(matched_event_id, '-1'::integer));
 
 
 --
@@ -1689,6 +1824,30 @@ ALTER TABLE ONLY public.asset_vulnerabilities
 
 ALTER TABLE ONLY public.asset_vulnerabilities
     ADD CONSTRAINT asset_vulnerabilities_vuln_id_fkey FOREIGN KEY (vuln_id) REFERENCES public.vulnerabilities(vuln_id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: event_threat_matches event_threat_matches_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_threat_matches
+    ADD CONSTRAINT event_threat_matches_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.security_events(event_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_threat_matches event_threat_matches_matched_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_threat_matches
+    ADD CONSTRAINT event_threat_matches_matched_event_id_fkey FOREIGN KEY (matched_event_id) REFERENCES public.security_events(event_id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_threat_matches event_threat_matches_matched_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_threat_matches
+    ADD CONSTRAINT event_threat_matches_matched_report_id_fkey FOREIGN KEY (matched_report_id) REFERENCES public.threat_reports(report_id) ON DELETE CASCADE;
 
 
 --
@@ -2942,6 +3101,22 @@ GRANT SELECT ON TABLE public.departments TO security_manager;
 
 
 --
+-- Name: TABLE event_threat_matches; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT ON TABLE public.event_threat_matches TO security_analyst;
+GRANT ALL ON TABLE public.event_threat_matches TO security_admin;
+GRANT SELECT ON TABLE public.event_threat_matches TO security_manager;
+
+
+--
+-- Name: SEQUENCE event_threat_matches_match_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.event_threat_matches_match_id_seq TO security_admin;
+
+
+--
 -- Name: TABLE event_types; Type: ACL; Schema: public; Owner: -
 --
 
@@ -3172,6 +3347,15 @@ GRANT SELECT ON TABLE public.vw_cvss_severity_mismatch TO security_manager;
 
 
 --
+-- Name: TABLE vw_event_threat_matches; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT ON TABLE public.vw_event_threat_matches TO security_analyst;
+GRANT ALL ON TABLE public.vw_event_threat_matches TO security_admin;
+GRANT SELECT ON TABLE public.vw_event_threat_matches TO security_manager;
+
+
+--
 -- Name: TABLE vw_open_high_risk_events; Type: ACL; Schema: public; Owner: -
 --
 
@@ -3209,5 +3393,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE summer IN SCHEMA public GRANT SELECT ON TABLES
 -- PostgreSQL database dump complete
 --
 
-\unrestrict B8VbOjfHSaVolqqL2rtkPDG9Tug4odG0yKAaw0QGaaKiVdj00owxVI65wduXuxH
+\unrestrict PdTy5Cy283AVry7OSGVteJ7udmWbEAO0BDh2reRpkMPesXgaXvUcP76MmiyIqy7
 
