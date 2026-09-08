@@ -9,12 +9,12 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검증 + bge-m3 결정 기록)_
+_최종 갱신: 2026-09-08 KST (보안 감사 대응 V037 — V016 비밀번호 로테이션 + SOC 대시보드 로그인 게이트)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
-- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V036__*.sql`** 적용.
-  `migrate.py status` → **적용됨 36 · 미적용 0 · drift 0** (V034 데이터 전용, V035 임베딩 컬럼 재정의, V036 매칭 데이터 정리)
+- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V037__*.sql`** 적용.
+  `migrate.py status` → **적용됨 37 · 미적용 0 · drift 0** (V035 임베딩 재정의, V036 매칭 정리, V037 role 비밀번호 폐기 기록)
 - **임베딩 모델**: `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원). V035 에서
   `all-MiniLM-L6-v2`(384차원)에서 교체 — 다국어 범용 모델의 한국어 주제 해상도 한계 때문.
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
@@ -66,6 +66,11 @@ _최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검
   (재발 방지) + `V036__cleanup_sim_threat_matches.sql` 로 기존 SIM 기반 THREAT_REPORT 매칭
   **6건 삭제**. 합성 이벤트가 사람이 큐레이션한 위협 인텔과 섞이지 않게. PAST_EVENT 매칭은
   패턴 반복 관찰용이라 유지.
+- **보안 감사 대응(V037)**: (a) V016 에 평문 커밋됐던 6개 role 비밀번호를
+  `scripts/bootstrap_role_passwords.py`(secrets.token_urlsafe, `psycopg2.sql.Identifier` +
+  파라미터 바인딩)로 랜덤 로테이션 → V037 이 `COMMENT ON ROLE` 로 "V016 값 폐기" 를 스키마에
+  기록. (b) `soc_dashboard.py` 에 bcrypt 기반 로그인 게이트(해시는 `SOC_DASHBOARD_AUTH_HASH`
+  환경변수, fail-closed, 미인증 시 DB 접속 전 `st.stop()`). DB 레벨 RBAC 는 유지(defense in depth).
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
@@ -83,7 +88,10 @@ _최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검
 확인: `launchctl list | grep security-db` (가운데 숫자 = 마지막 종료코드, 0=정상) — 2026-09-08 6종 전부 0.
 `threatlink.err.log` 은 anaconda numpy/scipy `UserWarning` 한 줄뿐(무해).
 
-### 라이브 DB 상태값 (2026-09-08, V036 후)
+### 라이브 DB 상태값 (2026-09-08, V037 후)
+- **운영 role 6종**(`security_analyst/admin/manager`, `dept_infra/dev/sales`): 비밀번호
+  2026-09-08 `bootstrap_role_passwords.py` 로 랜덤 로테이션(scram-sha-256 검증자). V016 하드코딩
+  값은 폐기(각 role `COMMENT ON ROLE` 에 기록). pg_hba 는 아직 `trust`.
 - `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 18 / 뷰 8**
 - `nvd_cve_details` 14행: EPSS 채워짐 12 / nvd_status **SYNCED 12 · NOT_FOUND 2** (PENDING 은 `nvd_sync.py` 로 정리 완료)
 - `security_events` 약 79건(`[SIM]` 은 synth 잡이 계속 증가 / 실제 42 고정) · embedding 전부 **768차원(ko-sroberta)** · `responses` 44건
@@ -97,7 +105,7 @@ _최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검
 - `search_similar_reports.py` CLI 검증(2026-09-08): 4개 검색어 중 피싱·DDoS·공급망은 정답
   리포트가 1위(피싱 0.793·DDoS 0.641 은 격차 큼, 공급망 0.616 은 2위와 근소), 랜섬웨어
   검색어만 report 3 이 5위(0.540) — 상세는 히스토리 참고.
-- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 36** · FK 17 · CHECK 23
+- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 37** · FK 17 · CHECK 23
 - `vw_priority_vulnerabilities` 12건, 그중 `epss_over_cvss=TRUE` **1건 = CVE-2021-26085**(CVSS 5.3 MEDIUM, EPSS 백분위 1.000)
 - 예시 MANUAL 2건: CVE-2021-26085(사용자포털), CVE-2020-3452(방화벽-메인) — 실제 '낮은 CVSS/높은 EPSS' 시연용
 - `[SIM]` 데이터는 `description`/`action_taken` 접두사로 구분, `svc_event_ingest` RLS 가 태그 강제
@@ -133,11 +141,69 @@ _최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검
 - **알림 채널**: 현재 macOS 네이티브만 활성. Slack/이메일은 `alertpoll` plist 의 `EnvironmentVariables` 에
   `SLACK_WEBHOOK_URL` / `ALERT_SMTP_*` 넣으면 자동 시도.
 - TLS/SSL, pg_hba scram 전환: 가이드 문서만 존재(`TLS_SSL_GUIDE.md`, `auth_hardening.sql`), 운영 반영 시 적용.
+  **pg_hba 를 scram 으로 전환하면 V037 `@migrate:verify` 의 "옛 V016 비밀번호 로그인 실패" 테스트를
+  재실행해 6건 전부 인증 실패하는지 확인할 것**(지금은 trust 라 SKIP 표시됨).
+- **SOC 대시보드 `SOC_DASHBOARD_AUTH_HASH`**: 운영자가 bcrypt 해시를 환경변수로 설정해야 대시보드가
+  열린다(미설정 시 fail-closed). launchd/systemd 로 상시 기동한다면 그 유닛의 env 에 해시를 넣어야 함.
 - 파티셔닝: `security_events` 는 FK 무결성과 충돌로 보류(`RUN_ORDER.md` 「파티셔닝 검토」).
 
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 보안(V037): 노출된 V016 비밀번호 로테이션 + SOC 대시보드 로그인 게이트
+
+보안 감사에서 시급 이슈 2건 확인 → 이번 라운드에서 해결.
+
+#### 1. V016 평문 비밀번호 무력화 — `bootstrap_role_passwords.py` + `V037`
+- **문제**: `sql/V016__auth_hardening.sql` 이 6개 운영 role
+  (`security_analyst`/`security_admin`/`security_manager`, `dept_infra`/`dept_dev`/`dept_sales`)의
+  비밀번호를 `<역할명>#Tmp-2026!chg` 패턴으로 평문 커밋. "임시 예시, 운영 시 교체" 주석만
+  있고 실제 교체된 적 없음 → 저장소 접근자가 전 계정 비밀번호를 즉시 유추 가능.
+- **`scripts/bootstrap_role_passwords.py` 신규**:
+  - 대상 6개 role(`--roles` 로 override). 각 role 에 `secrets.token_urlsafe(24)` 랜덤 비밀번호.
+  - `psycopg2.sql.SQL("ALTER ROLE {} WITH PASSWORD %s").format(sql.Identifier(role))` — role 은
+    식별자 quoting, 비밀번호는 파라미터 바인딩(문자열 concat 없음).
+  - 기본은 파일 저장 안 함 → 터미널에 1회만 출력 + "지금 비밀번호 관리자에 저장, 재조회 불가" 경고.
+    `--save-to-file` 은 `.gitignore` 로 걸린 경로(`git check-ignore`)만 허용, 아니면 중단.
+  - `--dry-run` 지원. `.gitignore` 에 `secrets/` 추가.
+  - docstring 에 "현재 trust 인증이라 비밀번호 값은 아직 검사 안 됨 — scram 전환 대비 선제 조치" 명시.
+- **실행 결과(2026-09-08)**: 6개 role 전부 로테이션 완료. `pg_authid.rolpassword` 확인 →
+  6개 전부 `SCRAM-SHA-256$...` 검증자로 새로 저장됨. 생성된 새 비밀번호 값은 이 로그/커밋/
+  코드 어디에도 기록하지 않음(터미널 1회 출력만).
+- **`sql/V037__rotate_exposed_role_passwords.sql`**:
+  - 본문: `DO $$ ... FOREACH ... COMMENT ON ROLE %I IS %L $$` — 6개 role 에 "비밀번호는
+    2026-09-08 `bootstrap_role_passwords.py` 로 로테이션됨, V016 하드코딩 값은 폐기됨" 코멘트(멱등).
+  - `@migrate:verify`: (1) 6개 role 코멘트 확인, (2) 검증자 = scram-sha-256 확인,
+    (3) `pg_hba_file_rules` 로 로컬 인증 방식 판별 → `\if :local_is_trust` 분기.
+    **현재 trust 라 "옛 비밀번호 로그인 실패" 테스트는 SKIP 으로 명시 출력**(거짓 통과 아님).
+    scram 전환 후 재실행하면 6개 `\!` 접속 시도가 전부 인증 실패해야 정상 — 검증절에 그 6줄 포함.
+  - `migrate.py up` → **ok**. 검증절 [1][2] 통과, [3] trust 감지 SKIP 표시.
+- V016 파일 자체는 불변 원칙이라 안 건드림 — `RUN_ORDER.md` V016 행에 "⚠️ 노출됨, V037 로 교체" 각주.
+
+#### 2. SOC 대시보드 로그인 게이트 — `scripts/soc_dashboard.py`
+- **문제**: DB 레벨 RBAC(`security_manager`)에만 의존, 앱에 로그인 없음 → `streamlit run` 포트
+  접근자 누구나 SOC 데이터 전체 열람 가능.
+- **수정**: `st.set_page_config` 직후, `get_conn`/`q` 정의·호출 전에 게이트 삽입.
+  - `import bcrypt`. 해시는 `SOC_DASHBOARD_AUTH_HASH` 환경변수로만 주입(코드에 없음).
+    평문 비교 없이 `bcrypt.checkpw` 만 사용. 잘못된 해시 형식은 `ValueError` 잡아 안내.
+  - **fail-closed**: `SOC_DASHBOARD_AUTH_HASH` 미설정 시 해시 생성 명령을 담은 에러 메시지 +
+    `st.stop()`. 절대 fail-open 아님.
+  - 미인증(`st.session_state["authenticated"]` 없음/False) 시 비밀번호 입력 폼만 렌더 후
+    `st.stop()` → 아래 DB 접속/쿼리 전혀 실행 안 됨. 올바른 비밀번호 시에만 세션 플래그 세팅 + `st.rerun()`.
+  - 사이드바 "로그아웃" 버튼(`st.session_state.clear()` + `st.rerun()`).
+  - docstring 에 설정법 + "앱 레벨 방어이며 DB 레벨 RBAC 는 유지(defense in depth)" 명시.
+- **동작 확인(streamlit headless 실행)**:
+  - `SOC_DASHBOARD_AUTH_HASH` 없이 기동 → 서버는 뜨지만(HTTP 200) 로그에 psycopg2/connect
+    흔적 전혀 없음 = 에러 후 `st.stop()`, **DB 안 건드림**(fail-closed 확인).
+  - 유효 해시 설정 + 미인증 → 동일하게 DB 접속 로그 없음 = 로그인 폼에서 멈춤.
+  - `bcrypt.checkpw`: 정답 True / 오답 False / 잘못된 해시 `ValueError` 처리 확인.
+
+#### 검증 요약
+- `migrate.py status` → 적용됨 **37** · drift 0 · `fn_verify_audit_chain()` breaks **0**
+- 6개 role: scram-sha-256 검증자 재저장 + `COMMENT ON ROLE` 폐기 기록
+- 대시보드: 해시 미설정 fail-closed / 미인증 시 DB 미접속 확인
+- `.gitignore` 에 `secrets/` 및 (지난 라운드) `Claude outputs/` 추가
 
 ### 2026-09-08 KST — 정리(V036): SIM→THREAT_REPORT 매칭 제외 + CLI 검증 + bge-m3 결정 기록
 

@@ -1,7 +1,15 @@
 """
 soc_dashboard.py - security_db SOC 대시보드 (Streamlit + psycopg2 + plotly.graph_objects)
 
+■ 로그인 게이트 (앱 레벨 방어; DB 레벨 RBAC(security_manager)는 그대로 유지 = defense in depth)
+    사전 준비:  pip install bcrypt --break-system-packages
+    해시 생성:  python3 -c "import bcrypt; print(bcrypt.hashpw(b'비밀번호', bcrypt.gensalt()).decode())"
+    실행 전 설정:  export SOC_DASHBOARD_AUTH_HASH='<위에서 생성한 bcrypt 해시>'
+    - 비밀번호는 bcrypt 해시로만 다룬다(평문 비교 없음). 해시는 환경변수로만 주입, 코드에 넣지 않는다.
+    - SOC_DASHBOARD_AUTH_HASH 가 없으면 대시보드를 열지 않고 에러 후 중단한다(fail-closed).
+
 실행:
+    export SOC_DASHBOARD_AUTH_HASH='...'
     streamlit run soc_dashboard.py
     # 헤드리스: streamlit run soc_dashboard.py --server.headless true --server.port 8502
 
@@ -19,6 +27,7 @@ DB 접속 계정 = security_manager :
 import decimal
 import os
 
+import bcrypt
 import pandas as pd
 import psycopg2
 import plotly.graph_objects as go
@@ -36,6 +45,46 @@ SEV_COLORS = {"LOW": "#3BA55D", "MEDIUM": "#E3B341", "HIGH": "#E8833A", "CRITICA
 RISK_COLORS = {"LOW": "#3BA55D", "MEDIUM": "#E3B341", "HIGH": "#E8833A", "CRITICAL": "#D64045"}
 
 st.set_page_config(page_title="security_db SOC 대시보드", layout="wide")
+
+# =====================================================================
+# 로그인 게이트 — DB 접속/쿼리가 실행되기 전에 여기서 차단한다.
+#   · 앱 레벨 방어. DB 레벨 RBAC(security_manager)는 그대로 유지 → defense in depth.
+#   · 비밀번호는 bcrypt 해시로만 비교. 해시는 SOC_DASHBOARD_AUTH_HASH 환경변수로만 주입.
+#   · 해시 미설정 시 fail-closed (그냥 열어주지 않는다).
+# =====================================================================
+_AUTH_HASH = os.environ.get("SOC_DASHBOARD_AUTH_HASH")
+
+if not _AUTH_HASH:
+    st.error(
+        "SOC_DASHBOARD_AUTH_HASH 환경변수가 설정되지 않았습니다 — 아래 명령으로 해시를 "
+        "생성한 뒤 설정하세요:\n\n"
+        "```\n"
+        "python3 -c \"import bcrypt; print(bcrypt.hashpw(b'비밀번호', bcrypt.gensalt()).decode())\"\n"
+        "export SOC_DASHBOARD_AUTH_HASH='<생성된 해시>'\n"
+        "```"
+    )
+    st.stop()
+
+if not st.session_state.get("authenticated", False):
+    st.title("🛡️ SOC 대시보드 로그인")
+    _pw = st.text_input("비밀번호", type="password")
+    if _pw:
+        try:
+            _ok = bcrypt.checkpw(_pw.encode("utf-8"), _AUTH_HASH.encode("utf-8"))
+        except ValueError:
+            st.error("SOC_DASHBOARD_AUTH_HASH 형식이 올바르지 않습니다 (bcrypt 해시가 아님).")
+            _ok = False
+        if _ok:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+
+with st.sidebar:
+    if st.button("로그아웃"):
+        st.session_state.clear()
+        st.rerun()
 
 
 @st.cache_resource

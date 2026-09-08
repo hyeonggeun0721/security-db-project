@@ -48,7 +48,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V013 | `cvss_consistency_check` | 마이그레이션 2 | 4 |
 | V014 | `audit_log_hardening` | 마이그레이션 3 | 3, 6, **9 이후**(9 가 audit_log TRUNCATE, 이 파일이 차단) |
 | V015 | `rls_expansion` | 마이그레이션 4 | 6 |
-| V016 | `auth_hardening` | 마이그레이션 5 | 4, 6 |
+| V016 | `auth_hardening` | 마이그레이션 5 | 4, 6 — ⚠️ **이 파일의 role 비밀번호(`<역할명>#Tmp-2026!chg`)는 평문 커밋돼 노출된 것으로 간주. V037 + `bootstrap_role_passwords.py` 로 교체됨** |
 | V017 | `nvd_integration` | NVD 연동 | 1, **13**(`fn_severity_rank()`) |
 | V018 | `fk_policy_hardening` | 보완: FK 참조동작 | 1, 2. 검증절에 RESTRICT 거부 테스트(`@migrate:verify`) |
 | V019 | `departments_normalization` | 보완: 부서 마스터 | 1, **6**(`rls_role_department`). `@migrate:verify` |
@@ -69,6 +69,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V034 | `threat_campaign_events` | **데이터 전용**: 실제 이벤트 12건(캠페인 8 + 일반 4) + 대응 12건 INSERT, `threat_reports` 3·5·6·7·8 의 `related_event_id` 연결(이제 8/8). 표본 확충 + 매칭 커버리지 | 9(샘플데이터), 27(event_types), 28(응답 타이밍), 33(임베딩). `@migrate:verify`. 적재 후 `event_threat_linker.py` 재실행 |
 | V035 | `reembed_korean_model` | 임베딩 모델 교체: `threat_reports`/`security_events` 의 `embedding` 을 `VECTOR(384)`→`VECTOR(768)` 로 DROP+ADD, HNSW 인덱스 재생성, `event_threat_matches` TRUNCATE. 모델 `all-MiniLM-L6-v2`→`jhgan/ko-sroberta-multitask` | 2, 33. `@migrate:verify`. 적용 후 `generate_embeddings.py` + `event_threat_linker.py` 로 전량 재임베딩 |
 | V036 | `cleanup_sim_threat_matches` | **데이터 정리**: `event_threat_matches` 에서 `match_type='THREAT_REPORT'` 이면서 `[SIM]` 합성 이벤트 발인 행 삭제(6건). 합성 이벤트가 실 위협 인텔과 매칭되는 걸 막음. `link_threat_reports()` 쿼리에도 `[SIM]%` 제외 추가(재발 방지) | 33(`event_threat_matches`). `@migrate:verify` |
+| V037 | `rotate_exposed_role_passwords` | **보안**: V016 에 평문 커밋된 role 비밀번호 폐기 기록. 본문은 6개 role 에 `COMMENT ON ROLE`(멱등)로 "V016 값은 노출·폐기, `bootstrap_role_passwords.py` 로 로테이션됨" 기록. **⚠️ 선행 조건: `python3 scripts/bootstrap_role_passwords.py` 를 먼저 실행**해 6개 role 비밀번호를 랜덤값으로 교체해 둔 상태여야 함. `@migrate:verify`(옛 비밀번호 로그인 실패 테스트 — 현재 trust 인증이라 SKIP, scram 전환 후 재검증) | 16 |
 
 각 그룹(V018~20, V021~26)은 대체로 상호 독립이며 표 순서가 자연스럽다.
 V021(search_path)은 V022(EXECUTE 회수)보다 먼저 — 함수 정의를 만지므로.
@@ -81,6 +82,46 @@ V027 은 V020 이 건 `chk_security_events_event_type` 를 제거하고 FK 로 �
   결과 **라이브 미적용, 향후 과제로 보류**.
 - **TLS/SSL**: `TLS_SSL_GUIDE.md` 참고. 운영 반영 시 절차만 문서화, 라이브 미적용.
 - **auth_hardening / pg_hba scram 전환**: `auth_hardening.sql` 주석 가이드. 라이브 미적용.
+
+## 보안 감사 대응 (2026-09-08)
+
+### 노출된 V016 비밀번호 로테이션 — `scripts/bootstrap_role_passwords.py` + `V037`
+
+V016 이 6개 운영 role(`security_analyst/admin/manager`, `dept_infra/dev/sales`)의 비밀번호를
+`<역할명>#Tmp-2026!chg` 패턴으로 평문 커밋했고 교체된 적이 없었다. 패턴이 예측 가능해
+저장소 접근자가 전 계정 비밀번호를 유추할 수 있다.
+
+**적용 순서 (반드시 이 순서):**
+```
+# 1) 6개 role 비밀번호를 secrets.token_urlsafe(24) 랜덤값으로 로테이션.
+#    새 비밀번호는 터미널에 1회만 출력됨 → 즉시 비밀번호 관리자에 저장(재조회 불가).
+python3 scripts/bootstrap_role_passwords.py                 # --dry-run 으로 대상만 미리보기 가능
+#    --save-to-file secrets/roles_<date>.txt  (secrets/ 는 .gitignore 로 제외됨. 다른 경로는 거부)
+
+# 2) "V016 값은 폐기됨" 을 스키마(role 코멘트)에 기록.
+python3 scripts/migrate.py up                               # V037 적용
+```
+- 새 고정 비밀번호를 SQL/코드/커밋에 다시 하드코딩하지 않는다(그러면 같은 문제 반복).
+- 현재 로컬 인증은 `trust` 라 비밀번호 값이 검사되지 않는다 → 이 로테이션은 **scram 전환
+  대비 선제 조치**. V037 `@migrate:verify` 의 "옛 비밀번호 로그인 실패" 테스트는 trust 를
+  감지하면 SKIP 표시(거짓 통과 아님), scram 전환 후 재실행해 6건 전부 인증 실패해야 정상.
+- 2026-09-08 실행: 6개 role 전부 로테이션 완료(scram-sha-256 검증자 저장 확인), V037 적용.
+
+### SOC 대시보드 로그인 게이트 — `scripts/soc_dashboard.py`
+
+DB 레벨 RBAC(`security_manager`)만 있고 앱에는 로그인이 없어, `streamlit run` 포트에
+접근 가능한 누구나 SOC 데이터 전체를 볼 수 있었다. `st.set_page_config` 직후, DB 접속/쿼리
+전에 실행되는 로그인 게이트를 자체 구현(외부 라이브러리 없음).
+```
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'비밀번호', bcrypt.gensalt()).decode())"
+export SOC_DASHBOARD_AUTH_HASH='<생성된 bcrypt 해시>'
+streamlit run scripts/soc_dashboard.py
+```
+- 비밀번호는 bcrypt 해시로만 비교, 해시는 환경변수로만 주입(코드에 없음).
+- `SOC_DASHBOARD_AUTH_HASH` 미설정 시 에러 + `st.stop()` → **fail-closed**(그냥 열어주지 않음).
+- 미인증이면 로그인 폼만 렌더하고 `st.stop()` → DB 접속/쿼리 전혀 실행 안 됨.
+- 사이드바 "로그아웃" 버튼(`st.session_state.clear()` + `st.rerun()`).
+- 앱 레벨 방어이며 DB 레벨 RBAC 는 그대로 유지(defense in depth).
 
 ## 파티셔닝 검토 (2026-09-07, 스크래치 DB `security_db_part`)
 
