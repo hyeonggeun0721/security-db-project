@@ -9,7 +9,7 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (V033 launchd 등록 + schema_dump 재생성)_
+_최종 갱신: 2026-09-08 KST (원본 이벤트 description 백필 + 실데이터 매칭 품질 검증)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
@@ -45,6 +45,10 @@ _최종 갱신: 2026-09-08 KST (V033 launchd 등록 + schema_dump 재생성)_
   + `ON CONFLICT DO NOTHING`)에 적재. 조회용 `vw_event_threat_matches`. SOC 대시보드 섹션 i 를
   i-1(THREAT_REPORT)/i-2(PAST_EVENT) 로 분리 — 유사도 스케일이 다른 두 종류가 서로를 밀어내지 않도록.
   launchd `com.security-db.threatlink` 10분 주기로 등록.
+- **원본 이벤트 description 백필**: `backfill_event_descriptions.py` 가 큐레이션 이벤트 30건
+  (V029 이전이라 `description IS NULL` 이던 것)을 실데이터(asset/CVE/severity/event_type)만으로
+  한 줄 요약해 채움(`[SIM]` 없음, `WHERE description IS NULL` 멱등). 이제 실제 이벤트도
+  임베딩/매칭 대상. 실데이터 기준 매칭 품질 검증 결과는 히스토리 2026-09-08 항목 참고.
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
@@ -65,14 +69,22 @@ _최종 갱신: 2026-09-08 KST (V033 launchd 등록 + schema_dump 재생성)_
 ### 라이브 DB 상태값 (2026-09-08)
 - `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 18 / 뷰 8**
 - `nvd_cve_details` 14행: EPSS 채워짐 12 / nvd_status **SYNCED 12 · NOT_FOUND 2** (PENDING 은 `nvd_sync.py` 로 정리 완료)
-- `security_events` 63건 (그중 `[SIM]` 33, `embedding` 채워짐 33) · `audit_log` 100건 · **`alert_log` 2건**(테스트 알림 이력)
-- **`event_threat_matches` 151행 — THREAT_REPORT 52 / PAST_EVENT 99** (`threatlink` 10분 주기가 계속 증분 적재)
+- `security_events` 63건 (`[SIM]` 33 / 실제 30) · **description NULL 0, embedding 63건 전부 채워짐** · `audit_log` 130건 · **`alert_log` 2건**(테스트 알림 이력)
+- **`event_threat_matches` 268행 — THREAT_REPORT 79 (실제 27 / SIM 52) / PAST_EVENT 189 (실제 90 / SIM 99)** (`threatlink` 10분 주기가 계속 증분 적재)
+- 실제 이벤트 유사도: PAST_EVENT 평균 0.907(백필 문장 평탄화로 1.000 다수 — 히스토리 참고), THREAT_REPORT 평균 0.634·최대 0.876
 - 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 33** · FK 17 · CHECK 23
 - `vw_priority_vulnerabilities` 12건, 그중 `epss_over_cvss=TRUE` **1건 = CVE-2021-26085**(CVSS 5.3 MEDIUM, EPSS 백분위 1.000)
 - 예시 MANUAL 2건: CVE-2021-26085(사용자포털), CVE-2020-3452(방화벽-메인) — 실제 '낮은 CVSS/높은 EPSS' 시연용
 - `[SIM]` 데이터는 `description`/`action_taken` 접두사로 구분, `svc_event_ingest` RLS 가 태그 강제
 
 ### 남은 이슈 / 다음에 하면 좋을 후보
+- **백필 description 평탄화**: `backfill_event_descriptions.py` 가 (event_type, asset, CVE)
+  동일 이벤트에 같은 문장을 생성 → PAST_EVENT 매칭에 유사도 정확히 1.000 이 다수. `detected_at`/
+  `status`/이벤트별 대응 요지를 실데이터 범위에서 한 조각 섞어 문장을 갈라놓으면 완화됨.
+  (이번엔 "실데이터만·한 줄" 스펙 유지 위해 미적용.) 상세: 히스토리 2026-09-08 A/B 항목.
+- **THREAT_REPORT 매칭 정밀도**: 실제 이벤트 최고 유사도 0.876, 의미상 정확한 짝(OpenSSL↔
+  OpenSSL 리포트)은 0.67 에 그침. `MIN_SIMILARITY`(0.45) 상향은 약한 매칭과 진짜 짝을 같이
+  자를 위험 — 데이터 더 쌓고 판단.
 - **SIM 볼륨**: synth 잡 25분 주기 → 하루 ~100~150건 누적. 데모 아닐 때 `unload` 하거나
   plist `ProgramArguments` 에 `--count 1` 추가 검토. 정리: `DELETE FROM security_events WHERE description LIKE '[SIM]%'` (responses CASCADE, 해시체인 무결).
 - **KISA 재스캔**: Docker Desktop 데몬이 떠 있어야 함(이번엔 이 작업 위해 기동). `ubuntu:22.04` 이미지는 캐시됨.
@@ -94,6 +106,87 @@ _최종 갱신: 2026-09-08 KST (V033 launchd 등록 + schema_dump 재생성)_
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 원본 이벤트 description 백필 + 실데이터 기준 매칭 품질 검증 (A/B)
+
+지난 라운드(V033)에서 미확인으로 남긴 두 가지를 이번에 확인했다. **(A)** 합성 이벤트
+PAST_EVENT 유사도가 0.9+ 로 몰린 게 정말 문구 템플릿 재사용 때문인지, **(B)** 순수 실제
+(비-SIM) 이벤트끼리는 매칭 품질이 어떤지. (B) 확인을 위해 그동안 임베딩 대상이 아니었던
+큐레이션 원본 이벤트 30건(`description IS NULL`)을 실데이터로 백필했다.
+
+#### 1. (A) 합성 이벤트 문구 템플릿 — 코드로 확정
+`scripts/generate_synthetic_events.py` 확인 결과 **가설 맞음**. 근거(코드 인용):
+- `TEMPLATES` (line 66–119): event_type 별로 **고정 포맷 문자열 2~3개** 리스트. 예)
+  `"악성코드탐지": ["{asset} EDR 이 의심 프로세스 격리 (sha256 {hash}...)", "{asset} 에서 알려진 악성 IOC 도메인 접속 시도", "{asset} 에 랜섬웨어 계열 행위 탐지, 자동 격리"]`
+- `make_description()` (line 139–148):
+  `tpl = random.choice(TEMPLATES.get(etype, GENERIC))` → `return SIM + tpl.format(ip=…, n=random.choice([3,5,7,8,12,15,22,35,48,120,300]), asset=asset_name, user=random.choice(FAKE_USERS), hash=…, etype=etype)`
+- 즉 합성 description = **29개 고정 스켈레톤 중 하나** + 슬롯 치환뿐. 치환값도 `{n}` 은 11개
+  고정 정수, `{user}` 는 6개 고정(`FAKE_USERS`, line 62), `{ip}` 는 문서용 대역. 문장 뼈대는
+  템플릿당 100% 고정.
+- 게다가 일부 템플릿은 `{asset}` 조차 안 씀 — line 94 `"피싱 의심 첨부(.html) {n}건 자동 격리"`,
+  line 98 `"SMB 인증 실패 급증: 분당 {n}회, 소스 {ip}"`. 이런 템플릿에서 나온 두 이벤트는
+  **숫자 하나만 다름** → 임베딩 코사인 0.97+ (지난 라운드에서 관측된 event 48↔56 = 0.972 와 일치).
+
+#### 2. (B) 데이터 준비 — `scripts/backfill_event_descriptions.py` (신규)
+- 대상: `description IS NULL` 인 큐레이션 이벤트 **30건**(event_id 1~30). V029 에서 컬럼이
+  뒤늦게 추가돼 소급 반영이 안 됐던 것.
+- 각 이벤트가 이미 참조하는 실데이터만으로 한 줄 한국어 요약 생성:
+  `assets.asset_name` + `vulnerabilities.cve_id`/`description`(vuln_id 있을 때) + `severity`
+  + `event_type`. `responses.action_taken` 은 미리보기에만 표시하고 문장엔 넣지 않음.
+  **새 사실 없음** — 문장의 모든 명사가 위 컬럼에서 옴. `[SIM]` 접두사 안 붙임.
+- `UPDATE … WHERE description IS NULL` 로 한정(멱등). 미리보기 30건 육안 검토 후 `--apply`.
+- 결과: **30건 UPDATE·커밋**. `description IS NULL` 잔여 0. 감사 트리거 정상 발동
+  (`audit_log` 에 `security_events UPDATE 30` 행). **`fn_verify_audit_chain()` breaks = 0**.
+- 임베딩/매칭: `event_threat_linker.py` — launchd(`threatlink`, 10분)가 이미 30건을 처리한
+  뒤라 수동 실행은 "신규 임베딩 0건". 현재 `security_events` 63건 **전부 embedding 채워짐**.
+
+#### 3. (B) 결과 — 실제 이벤트 vs SIM 이벤트 유사도 분포 (`event_threat_matches`)
+
+| match_type | 이벤트 | 매칭수 | 평균 | 중앙값 | 최대 | ≥0.9 |
+|---|---|---:|---:|---:|---:|---:|
+| PAST_EVENT | 실제(curated) | 90 | 0.907 | 0.962 | 1.000 | 58 |
+| PAST_EVENT | SIM | 99 | 0.817 | 0.818 | 0.983 | 34 |
+| THREAT_REPORT | 실제(curated) | 27 | 0.634 | 0.603 | 0.876 | 0 |
+| THREAT_REPORT | SIM | 52 | 0.523 | 0.529 | 0.598 | 0 |
+
+- **THREAT_REPORT — 가설 방향대로**: 실제 이벤트는 0.45~0.88 로 **넓게 퍼지고 더 높음**,
+  SIM 은 52건 전부 0.45~0.60 에 **바짝 뭉침**(최대 0.598). SIM 문장("포트 스캔 15회 탐지",
+  "사칭 메일 신고")은 특정 리포트와 의미 연결이 없어 임계값 바로 위 약한 매칭만 걸림.
+  단, 실제 이벤트도 **정밀도는 보통** — 유일하게 의미상 정확한 짝(OpenSSL 이벤트 1·8·28 ↔
+  "2024년 OpenSSL 원격코드실행 침해사고 사례 분석")이 0.67~0.76 에 그침. 오히려 vuln 연결이
+  없어 문장이 일반적인 이벤트 4·6·9 가 리포트 산문체와 겹쳐 상위권(0.74~0.88)을 차지.
+- **PAST_EVENT — 예상과 반대**: 실제 이벤트가 SIM 보다 **오히려 더 높음**(평균 0.907 vs
+  0.817, 90건 중 58건이 ≥0.9). 원인은 **이번 백필 스크립트가 SIM 과 같은 약점을 재현**한 것:
+  (event_type, asset, CVE) 가 같은 이벤트에 대해 템플릿이 **바이트 단위로 동일한 문장**을
+  생성 → 30건 중 고유 description 은 23개, 26개 매칭이 유사도 **정확히 1.000**(텍스트 동일).
+  텍스트가 다른 64개 매칭도 평균 0.869 (예: event 5 "사용자포털 대상 웹 취약점 스캐닝…
+  CVE-2025-0210" ↔ event 17 "결제API서버 대상 웹 취약점 스캐닝… CVE-2025-0210" = 0.996,
+  자산명만 다름).
+- **단, 이 높은 유사도의 일부는 진짜 신호**: 큐레이션 이벤트 17~25 는 2025-08-14 결제API서버
+  한 자산에 몰린 사건(같은 캠페인), 26~30 은 2025-09-01 사내DB서버에 몰린 사건. 실제로 반복된
+  상관 이벤트라 유사도가 높은 게 맞다. 문제는 **정확히 1.000** 인 부분(문장 평탄화 아티팩트).
+- **대시보드 확인**: `soc_dashboard.py` 섹션 i 를 "합성 데이터 포함 보기 OFF"(기본)로 보면
+  이제 순수 실제 이벤트만 남는다. i-2(PAST_EVENT) 상위 15는 전부 위 사건 몰림 구간의 실제
+  이벤트 1.000 쌍으로 채워짐(SIM ON 이어도 이들이 SIM 0.97 대를 눌러 상위 유지). i-1은
+  0.59~0.876 범위로 채워짐. **streamlit 자체는 이 환경에서 대화형 실행 불가**라, 섹션 i 와
+  동일한 필터(`coalesce(description,'') NOT LIKE '[SIM]%'`)·정렬을 SQL 로 재현해 확인함.
+
+#### 4. 결론
+- **(A)**: 확정 — 합성 이벤트는 고정 템플릿 + 슬롯 치환이라 PAST_EVENT 유사도가 구조적으로
+  높다. 코드 근거 명확.
+- **(B)**: THREAT_REPORT 는 실제 이벤트가 SIM 보다 높고 넓게 퍼짐(가설과 같은 방향), 다만
+  절대 정밀도는 중간. PAST_EVENT 는 **가설과 반대로** 실제 이벤트가 더 높게 나왔는데, 이는
+  이번 백필 문장이 (type, asset, CVE) 동일 시 같은 문장을 만들어낸 탓 — SIM 의 약점을 그대로
+  재현. 있는 그대로 기록함.
+
+#### 5. 남은 할 일
+- 백필 description 다양화: `detected_at`/`status`/이벤트별 `action_taken` 요지를 한 조각 섞어
+  (type, asset, CVE) 동일 이벤트도 문장이 갈라지게 하면 PAST_EVENT 1.000 아티팩트가 줄어든다.
+  실데이터 범위 안에서만. (이번엔 "실데이터만·한 줄" 스펙 지키느라 미적용, 후속 후보.)
+- `MIN_SIMILARITY`(0.45) 재검토: THREAT_REPORT 실제 이벤트 정밀도가 낮아, 임계값을 올리면
+  약한 매칭이 정리되지만 진짜 짝(OpenSSL 0.67)도 같이 잘릴 수 있음 — 데이터 더 쌓고 판단.
+- 큐레이션 원본 이벤트에 `[SIM]` 아닌 실제 대응(`responses`)이 있는데 문장에 안 녹임 —
+  필요 시 별도 컬럼/뷰로.
 
 ### 2026-09-08 KST — Git 저장소 초기화 + 단계별 커밋 히스토리 재구성 + GitHub 비공개 저장소
 

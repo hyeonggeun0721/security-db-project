@@ -214,18 +214,35 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 - **왜 재계산이 아니라 저장인가**: alert_log/scan_runs 와 같은 이유 — 대시보드가 매 새로고침마다
   벡터 유사도를 다시 계산할 필요가 없고, threat_reports 가 나중에 늘어나면 같은 이벤트라도 새 매칭
   행이 추가되는 이력이 남는다.
-- **대시보드**: `soc_dashboard.py` 섹션 i (`vw_event_threat_matches`, 유사도순 상위 30건, SIM 필터 연동).
-- **미실행 상태**: 마이그레이션(V033)·스크립트·대시보드 섹션·launchd plist 는 작성 완료. 실제 DB 적용
-  (`migrate.py up`)과 `event_threat_linker.py` 첫 실행, `MIN_SIMILARITY` 값 검증은 아직 이 세션에서
-  수행하지 못했다 — 로컬 터미널에서 아래 순서로 직접 확인 필요.
+- **대시보드**: `soc_dashboard.py` 섹션 i — i-1(THREAT_REPORT)/i-2(PAST_EVENT) 로 분리,
+  각자 유사도순 상위 15건, SIM 필터(`coalesce(description,'') NOT LIKE '[SIM]%'`) 연동.
+- **적용 완료**(2026-09-08): `migrate.py up` 으로 V033 적용, `event_threat_linker.py` 실행,
+  launchd `threatlink` 등록. `MIN_SIMILARITY`=0.45 는 THREAT_REPORT 노이즈는 잘 막지만 실제
+  이벤트 최고 유사도가 0.876 에 그쳐 정밀도는 중간 — 데이터 더 쌓고 재검토(PROJECT_LOG
+  2026-09-08 A/B 항목).
 
-  ```
-  python3 scripts/migrate.py status              # V033 이 pending 인지 확인
-  python3 scripts/migrate.py up                  # 적용 + 검증절 실행
-  python3 scripts/event_threat_linker.py --dry-run   # 임베딩/매칭 미리보기
-  python3 scripts/event_threat_linker.py             # 실제 반영
-  streamlit run scripts/soc_dashboard.py         # 섹션 i 확인
-  ```
+### 원본 이벤트 description 백필 — `scripts/backfill_event_descriptions.py`
+
+`security_events.description` 은 V029 에서 뒤늦게 추가된 컬럼이라, 그 전에 넣은 큐레이션
+이벤트(event_id 1~30)는 `description IS NULL` → V033 임베딩/매칭 대상에서 통째로 빠져 있었다.
+이 스크립트가 그 30건을, 이벤트가 이미 참조하는 실데이터만으로 한 줄 한국어 요약해 채운다.
+
+- 근거 컬럼: `assets.asset_name`, `vulnerabilities.cve_id`/`description`(vuln_id 있을 때),
+  `severity`, `event_type`. `responses.action_taken` 은 미리보기 표시용(문장엔 안 넣음).
+  **새 사실 생성 안 함**, `[SIM]` 접두사 안 붙임(실제 이벤트 구분 유지).
+- `UPDATE … WHERE description IS NULL` 로 한정 → 재실행 안전(멱등). 감사 트리거 정상 발동.
+
+```
+python3 scripts/backfill_event_descriptions.py           # 미리보기(전체)
+python3 scripts/backfill_event_descriptions.py --apply   # 실제 UPDATE + 커밋
+psql -d security_db -c "SELECT count(*) FROM fn_verify_audit_chain();"   # breaks=0 확인
+python3 scripts/event_threat_linker.py                   # 새 description 임베딩/매칭
+```
+
+- **한계**(2026-09-08 관측): (event_type, asset, CVE) 가 같은 이벤트엔 같은 문장이 생성돼,
+  PAST_EVENT 매칭에 유사도 정확히 1.000 이 다수 나온다(30건 중 고유 문장 23개). 큐레이션
+  이벤트 중 실제로 한 사건에 몰린 구간(2025-08-14 결제API서버, 2025-09-01 사내DB서버)이라
+  일부는 진짜 신호지만, 1.000 자체는 문장 평탄화 아티팩트. 다양화는 후속 후보.
 
 ## 자동 스케줄 (launchd) — 등록 완료 (threatlink 는 2026-09-08 추가)
 
