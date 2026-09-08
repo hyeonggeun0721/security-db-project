@@ -95,9 +95,15 @@ def _insert_match(cur, event_id, match_type, matched_report_id, matched_event_id
 
 def link_threat_reports(conn, dry_run):
     cur = conn.cursor()
+    # 합성([SIM]) 이벤트는 THREAT_REPORT 매칭 대상에서 제외한다. threat_reports 는
+    # 사람이 큐레이션한 실제 위협 인텔리전스라, 템플릿으로 찍어낸 합성 이벤트가 여기에
+    # 매칭되면 event_threat_matches 에 노이즈가 쌓인다(다른 스크립트들과 동일한
+    # '[SIM]%' 제외 컨벤션). PAST_EVENT 매칭(link_past_events)은 합성/실이벤트 간
+    # 패턴 유사도를 보는 용도라 이 제외를 적용하지 않는다.
     cur.execute("""
         SELECT e.event_id FROM security_events e
         WHERE e.embedding IS NOT NULL
+          AND coalesce(e.description, '') NOT LIKE '[SIM]%'
           AND NOT EXISTS (
               SELECT 1 FROM event_threat_matches m
               WHERE m.event_id = e.event_id AND m.match_type = 'THREAT_REPORT'

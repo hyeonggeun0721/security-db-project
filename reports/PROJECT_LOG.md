@@ -9,12 +9,12 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 문장 다양화 + 대시보드 ground truth)_
+_최종 갱신: 2026-09-08 KST (V036 SIM→THREAT_REPORT 매칭 제외 + CLI 검증 + bge-m3 결정 기록)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
-- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V035__*.sql`** 적용.
-  `migrate.py status` → **적용됨 35 · 미적용 0 · drift 0** (V034 데이터 전용, V035 임베딩 컬럼 재정의)
+- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V036__*.sql`** 적용.
+  `migrate.py status` → **적용됨 36 · 미적용 0 · drift 0** (V034 데이터 전용, V035 임베딩 컬럼 재정의, V036 매칭 데이터 정리)
 - **임베딩 모델**: `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원). V035 에서
   `all-MiniLM-L6-v2`(384차원)에서 교체 — 다국어 범용 모델의 한국어 주제 해상도 한계 때문.
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
@@ -61,6 +61,11 @@ _최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 
   `MIN_SIMILARITY` 0.45→0.60(새 분포 반영). 결과: **리포트 커버리지 8/8**(report 5 포함),
   **PAST_EVENT 인위적 유사도 1.000 = 0**(백필 `--rewrite` 로 30건 문장 다양화 병행), 대시보드
   i-0(ground truth) 정답 8쌍 전부 모델이 재현(재현율 100%).
+- **합성 이벤트 THREAT_REPORT 매칭 제외(V036)**: `event_threat_linker.py` 의
+  `link_threat_reports()` pending 쿼리에 `coalesce(e.description,'') NOT LIKE '[SIM]%'` 추가
+  (재발 방지) + `V036__cleanup_sim_threat_matches.sql` 로 기존 SIM 기반 THREAT_REPORT 매칭
+  **6건 삭제**. 합성 이벤트가 사람이 큐레이션한 위협 인텔과 섞이지 않게. PAST_EVENT 매칭은
+  패턴 반복 관찰용이라 유지.
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
@@ -78,17 +83,21 @@ _최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 
 확인: `launchctl list | grep security-db` (가운데 숫자 = 마지막 종료코드, 0=정상) — 2026-09-08 6종 전부 0.
 `threatlink.err.log` 은 anaconda numpy/scipy `UserWarning` 한 줄뿐(무해).
 
-### 라이브 DB 상태값 (2026-09-08, V035 후)
+### 라이브 DB 상태값 (2026-09-08, V036 후)
 - `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 18 / 뷰 8**
 - `nvd_cve_details` 14행: EPSS 채워짐 12 / nvd_status **SYNCED 12 · NOT_FOUND 2** (PENDING 은 `nvd_sync.py` 로 정리 완료)
-- `security_events` **79건 (`[SIM]` 37 / 실제 42)** · description NULL 0, embedding 전부 **768차원(ko-sroberta)** · `responses` 44건 · `audit_log` 315건 · `alert_log` 2건
+- `security_events` 약 79건(`[SIM]` 은 synth 잡이 계속 증가 / 실제 42 고정) · embedding 전부 **768차원(ko-sroberta)** · `responses` 44건
 - `threat_reports` 8건 전부 `related_event_id` 연결(V034) · 임베딩 8건 재생성(V035)
-- **`event_threat_matches` 320행**(V035 에서 TRUNCATE 후 재계산). 실제(non-SIM) 이벤트 발:
-  THREAT_REPORT 98 / PAST_EVENT 117. **THREAT_REPORT 매칭이 잡히는 리포트 8/8**(report 5 포함).
-- 실제 이벤트 유사도(V035): THREAT_REPORT 평균 0.694·중앙 0.697·최대 0.872, PAST_EVENT 평균
+- **`event_threat_matches`**: `THREAT_REPORT` **98건 전부 실제(non-SIM) 이벤트 발**(V036 에서
+  SIM 발 6건 삭제 + 스크립트가 재발 차단). `PAST_EVENT` 는 SIM 포함 유지(패턴 반복 관찰용).
+  **THREAT_REPORT 매칭이 잡히는 리포트 8/8**(report 5 포함).
+- 실제 이벤트 유사도(V035~): THREAT_REPORT 평균 0.694·중앙 0.697·최대 0.872, PAST_EVENT 평균
   0.845·중앙 0.859·최대 0.986. **유사도 정확히 1.000 = 0건**(백필 `--rewrite` + 새 모델).
 - 대시보드 i-0(ground truth) 정답 8쌍 전부 i-1 모델 매칭이 재현 → **재현율 100%**.
-- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 35** · FK 17 · CHECK 23
+- `search_similar_reports.py` CLI 검증(2026-09-08): 4개 검색어 중 피싱·DDoS·공급망은 정답
+  리포트가 1위(피싱 0.793·DDoS 0.641 은 격차 큼, 공급망 0.616 은 2위와 근소), 랜섬웨어
+  검색어만 report 3 이 5위(0.540) — 상세는 히스토리 참고.
+- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 36** · FK 17 · CHECK 23
 - `vw_priority_vulnerabilities` 12건, 그중 `epss_over_cvss=TRUE` **1건 = CVE-2021-26085**(CVSS 5.3 MEDIUM, EPSS 백분위 1.000)
 - 예시 MANUAL 2건: CVE-2021-26085(사용자포털), CVE-2020-3452(방화벽-메인) — 실제 '낮은 CVSS/높은 EPSS' 시연용
 - `[SIM]` 데이터는 `description`/`action_taken` 접두사로 구분, `svc_event_ingest` RLS 가 태그 강제
@@ -98,11 +107,16 @@ _최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 
   해결**. report 5 포함 커버리지 8/8, ground truth 재현율 100%. (상세: 히스토리 2026-09-08 V035.)
 - ~~백필 description 평탄화~~ → `--rewrite`(status 조각 추가) + 새 모델로 **인위적 유사도 1.000
   = 0건**. 30건 전부 고유 문장.
-- **SIM 이벤트가 THREAT_REPORT 매칭에 일부 유입**: V035·`MIN_SIMILARITY`=0.60 에서도 SIM 이벤트
-  6건이 TOP-1 유사도 ≥0.60 이라 매칭됨. 대시보드는 SIM 필터로 가리므로 방치 중. 더 엄격히
-  하려면 임계값을 0.63~0.65 로 올리는 안(실제 이벤트 몇 건도 같이 탈락).
-- **`search_similar_reports.py`**: `MODEL_NAME` 만 새 모델로 바꿨고 대화형 CLI 실사용 검증은
-  아직 안 함. `bge-m3`(1024차원)는 현 모델로 목표 달성돼 미시도.
+- ~~SIM 이벤트가 THREAT_REPORT 매칭에 일부 유입~~ → **V036 에서 데이터 레벨로 해결**.
+  `link_threat_reports()` 가 `[SIM]%` 를 후보에서 제외하고, 기존 6건은 마이그레이션으로 삭제.
+- ~~`search_similar_reports.py` CLI 미검증~~ → **2026-09-08 4개 검색어로 실행 확인**(위 상태값 /
+  히스토리). 대체로 정상, 랜섬웨어 검색어는 코퍼스 특성상 약함(report 3 이 "초기 침투" 중심이라
+  "암호화·금전요구" 표현과 거리).
+- **bge-m3(1024차원) 미채택 — 결정 기록**: ko-sroberta 로 이미 threat_reports 커버리지 8/8,
+  ground truth 재현율 100%, 인위적 중복 0건을 달성했다. 차원이 더 큰 모델(bge-m3)은
+  저장공간(pgvector 행 크기)·인코딩 속도 비용이 더 크고, 현재 데이터 규모(리포트 8건, 실제
+  이벤트 42건)에서 추가 이득이 불확실하다. 데이터가 크게 늘거나 다국어 리포트가 섞이는
+  상황이 오면 그때 재검토한다.
 - **SIM 볼륨**: synth 잡 25분 주기 → 하루 ~100~150건 누적. 데모 아닐 때 `unload` 하거나
   plist `ProgramArguments` 에 `--count 1` 추가 검토. 정리: `DELETE FROM security_events WHERE description LIKE '[SIM]%'` (responses CASCADE, 해시체인 무결).
 - **KISA 재스캔**: Docker Desktop 데몬이 떠 있어야 함(이번엔 이 작업 위해 기동). `ubuntu:22.04` 이미지는 캐시됨.
@@ -124,6 +138,54 @@ _최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 정리(V036): SIM→THREAT_REPORT 매칭 제외 + CLI 검증 + bge-m3 결정 기록
+
+V035 라운드(커밋 6047794)에서 남긴 미해결 메모 3개를 이번 라운드에서 전부 처리.
+
+#### 1. 합성([SIM]) 이벤트가 THREAT_REPORT 매칭에 섞이는 문제 — 데이터 레벨 원인 제거
+- **원인**: `event_threat_linker.py` 의 `link_threat_reports()` 가 매칭 대상 이벤트를 뽑을 때
+  `[SIM]%` 를 제외하지 않아, 템플릿으로 찍어낸 합성 이벤트가 사람이 큐레이션한 `threat_reports`
+  와 매칭되어 `event_threat_matches` 에 6건 저장돼 있었다(대시보드는 SIM 토글로 화면에서만 가림).
+- **스크립트 수정**: `link_threat_reports()` pending 쿼리에
+  `AND coalesce(e.description,'') NOT LIKE '[SIM]%'` 추가(다른 스크립트들과 동일 컨벤션).
+  `link_past_events()` 는 그대로 — 합성/실이벤트 간 패턴 반복을 보는 용도라 제외하지 않음.
+- **마이그레이션 `sql/V036__cleanup_sim_threat_matches.sql`**:
+  `DELETE FROM event_threat_matches WHERE match_type='THREAT_REPORT' AND event_id IN
+  (SELECT event_id FROM security_events WHERE description LIKE '[SIM]%')`.
+  `migrate.py up` → **ok (0.023s)**. 검증절 결과:
+  - SIM 발 THREAT_REPORT 매칭: **0** (삭제 전 6건: event 41·53·57·58·62·63, 전부 report 4 와
+    유사도 0.605~0.699 로 매칭돼 있던 것)
+  - 남은 THREAT_REPORT 매칭 98건 전부 실제 이벤트 발
+  - SIM 발 PAST_EVENT 매칭 110건은 그대로 유지(의도대로)
+  - `fn_verify_audit_chain()` **0행 (breaks=0)** — `event_threat_matches` 는 감사 대상 아님
+- **재실행 확인**: `python3 scripts/event_threat_linker.py` 실행 시 THREAT_REPORT 시도 로그에
+  실제 이벤트(7·86·87·88)만 나오고 **SIM event_id 는 전혀 안 나옴**. 재발 안 함.
+- 리포트 커버리지는 8/8 유지(삭제된 6건이 전부 report 4 라, report 4 는 실제 이벤트 매칭으로 계속 커버됨).
+
+#### 2. `search_similar_reports.py` 대화형 CLI 첫 실사용 검증 (검색어 4개)
+| 검색어(요약) | Top-1 | Top-1 유사도 | 정답 리포트 순위 | 평가 |
+|---|---|---:|---|---|
+| 랜섬웨어로 파일 암호화·금전요구 | rpt2 내부 DB 접근제어 우회 | 0.587 | **rpt3 = 5위 (0.540)** | 약함. 전체가 0.54~0.59 로 뭉침 — rpt3 content 가 "피싱→초기침투→권한상승" 중심이라 "암호화·금전요구" 표현과 의미 거리 |
+| 피싱 메일로 인증정보 유출 의심 | **rpt5 피싱 캠페인 자격증명 탈취** | 0.793 | **rpt5 = 1위** | 매우 정확. 2위(0.577)와 격차 큼 |
+| 서버에 비정상 트래픽 몰려 서비스 마비 | **rpt6 대규모 DDoS 대응** | 0.641 | **rpt6 = 1위** | 정확. 2위(0.484)와 격차 큼 |
+| 협력업체 SW 업데이트 경로 침투 | **rpt8 공급망 공격 분석** | 0.616 | **rpt8 = 1위** | 정확하나 근소 — 2위 rpt4(0.613)와 0.003 차 |
+- **종합**: 4개 중 3개(피싱·DDoS·공급망)는 정답 리포트가 1위. 피싱/DDoS 는 격차가 커서 확실,
+  공급망은 1위지만 근소차. 랜섬웨어 검색어만 정답이 5위 — 이는 모델 문제라기보다 rpt3 의
+  본문이 "랜섬웨어의 결과(암호화·협박)" 가 아니라 "초기 침투 단계" 를 다루기 때문. 코퍼스
+  8건 규모의 한계이기도 함. CLI 자체는 정상 동작.
+
+#### 3. bge-m3 비교 여부 결정 — **시도하지 않음** (코드 변경 없음)
+- V035 에서 `jhgan/ko-sroberta-multitask` 로 교체해 이미 목표 달성: threat_reports 커버리지
+  **8/8**, ground truth 재현율 **100%**, PAST_EVENT 인위적 유사도 1.000 **0건**.
+- `BAAI/bge-m3`(1024차원)는 ko-sroberta(768) 대비 pgvector 행 크기·HNSW 인덱스·인코딩 속도
+  비용이 더 크다. 현재 데이터 규모(리포트 8건, 실제 이벤트 42건)에서 추가 이득이 불확실하다.
+- **재검토 조건**: 리포트/이벤트 수가 크게 늘거나, 영어 등 다국어 위협 인텔이 섞이는 상황.
+
+#### 검증 요약
+- `migrate.py status` → 적용됨 **36** · drift 0
+- `event_threat_matches` THREAT_REPORT: SIM 발 **0** / 실제 발 **98** / 리포트 커버리지 **8/8**
+- `fn_verify_audit_chain()` breaks = **0**
 
 ### 2026-09-08 KST — 한국어 임베딩 모델 교체(V035) + 백필 문장 다양화 + 대시보드 ground truth 병기
 

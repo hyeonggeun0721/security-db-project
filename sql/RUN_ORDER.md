@@ -68,6 +68,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V033 | `event_threat_matching` | 벡터검색-이벤트 연결: `security_events.embedding`(threat_reports 와 동일 차원) + `event_threat_matches`(THREAT_REPORT/PAST_EVENT) + `vw_event_threat_matches` | 2(pgvector/threat_reports), 4(GRANT). `@migrate:verify`. 데이터는 `event_threat_linker.py` 가 채움 |
 | V034 | `threat_campaign_events` | **데이터 전용**: 실제 이벤트 12건(캠페인 8 + 일반 4) + 대응 12건 INSERT, `threat_reports` 3·5·6·7·8 의 `related_event_id` 연결(이제 8/8). 표본 확충 + 매칭 커버리지 | 9(샘플데이터), 27(event_types), 28(응답 타이밍), 33(임베딩). `@migrate:verify`. 적재 후 `event_threat_linker.py` 재실행 |
 | V035 | `reembed_korean_model` | 임베딩 모델 교체: `threat_reports`/`security_events` 의 `embedding` 을 `VECTOR(384)`→`VECTOR(768)` 로 DROP+ADD, HNSW 인덱스 재생성, `event_threat_matches` TRUNCATE. 모델 `all-MiniLM-L6-v2`→`jhgan/ko-sroberta-multitask` | 2, 33. `@migrate:verify`. 적용 후 `generate_embeddings.py` + `event_threat_linker.py` 로 전량 재임베딩 |
+| V036 | `cleanup_sim_threat_matches` | **데이터 정리**: `event_threat_matches` 에서 `match_type='THREAT_REPORT'` 이면서 `[SIM]` 합성 이벤트 발인 행 삭제(6건). 합성 이벤트가 실 위협 인텔과 매칭되는 걸 막음. `link_threat_reports()` 쿼리에도 `[SIM]%` 제외 추가(재발 방지) | 33(`event_threat_matches`). `@migrate:verify` |
 
 각 그룹(V018~20, V021~26)은 대체로 상호 독립이며 표 순서가 자연스럽다.
 V021(search_path)은 V022(EXECUTE 회수)보다 먼저 — 함수 정의를 만지므로.
@@ -253,6 +254,21 @@ python3 scripts/event_threat_linker.py                            # 임베딩/�
 - 1차 백필(2026-09-08)은 (event_type, asset, CVE) 동일 시 문장이 완전히 같아 PAST_EVENT
   매칭에 유사도 1.000 이 26건 생겼다. `--rewrite`(status 조각 추가) + V035(ko-sroberta) 재임베딩
   후 30건 전부 고유 문장이 되고 인위적 1.000 은 0건이 됐다.
+
+### 합성 이벤트 THREAT_REPORT 매칭 제외 — `V036` + `event_threat_linker.py`
+
+`threat_reports` 는 사람이 큐레이션한 실제 위협 인텔리전스다. `generate_synthetic_events.py`
+가 템플릿으로 찍어내는 `[SIM]` 합성 이벤트가 여기에 매칭되면 `event_threat_matches` 에
+분석 신호를 오염시키는 노이즈가 쌓인다(대시보드 SIM 토글은 화면에서만 가림).
+
+- **스크립트**: `event_threat_linker.py` 의 `link_threat_reports()` pending 쿼리에
+  `AND coalesce(e.description,'') NOT LIKE '[SIM]%'` 추가 → 합성 이벤트는 THREAT_REPORT
+  매칭 후보에서 아예 빠진다. `link_past_events()` 는 그대로(합성/실이벤트 간 패턴 반복 관찰용).
+- **V036 (`cleanup_sim_threat_matches`)**: 스크립트 수정 전에 이미 저장된 SIM 발 THREAT_REPORT
+  매칭 6건(event 41·53·57·58·62·63, 전부 report 4)을 DELETE. `@migrate:verify` 에서
+  SIM 발 THREAT_REPORT = 0, PAST_EVENT SIM 매칭은 유지, `fn_verify_audit_chain()` 0행 확인.
+- 적용 후 `python3 scripts/event_threat_linker.py` 재실행 → THREAT_REPORT 시도 로그에 실제
+  이벤트만 나오고 SIM `event_id` 는 안 나오면 정상.
 
 ## 자동 스케줄 (launchd) — 등록 완료 (threatlink 는 2026-09-08 추가)
 

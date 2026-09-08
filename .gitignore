@@ -33,6 +33,7 @@ venv/
 *.log
 logs/
 *.tmp
+Claude outputs/
 
 # 참고: sql/ 의 *.sql 마이그레이션과 sql/schema_dump.sql 은 커밋 대상이다.
 #       auth_hardening.sql 의 'Xxx#Tmp-2026!chg' 류는 "임시 예시 비밀번호"이며
