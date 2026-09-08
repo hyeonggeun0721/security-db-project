@@ -4,6 +4,11 @@
 
 -r requirements.txt
 
+# --- 자동 회귀 테스트 (tests/) ---
+#     스크래치 DB(security_db_pytest)에서만 돈다. 라이브 security_db 는 안 건드린다.
+#     실행:  pytest tests/ -v
+pytest>=7.4
+
 # --- 대시보드 스크린샷 자동화 (scripts/_shoot_dashboard.py) ---
 #     Streamlit 대시보드를 헤드리스 브라우저로 열어 섹션별 PNG 를 뜬다. 포트폴리오/문서용.
 #     설치 후:  playwright install chromium

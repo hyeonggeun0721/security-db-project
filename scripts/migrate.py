@@ -13,7 +13,8 @@ migrate.py — security_db 마이그레이션 러너 (psql 래퍼 + 체크섬 dr
 
 명령:
   python3 scripts/migrate.py status              # 무엇이 적용/미적용/drift 인지 (기본)
-  python3 scripts/migrate.py up [--dry-run]      # 미적용 마이그레이션을 순서대로 적용
+  python3 scripts/migrate.py up [--dry-run] [--skip-verify]   # 미적용 마이그레이션을 순서대로 적용
+                                                # --skip-verify: '-- @migrate:verify' 절은 건너뛴다(본문만 적용)
   python3 scripts/migrate.py baseline [--force]  # 기존 DB 채택: 현재 V*.sql 을 "이미 적용됨"으로 기록(실행 안 함)
   옵션: --database NAME (기본 $PGDATABASE 또는 security_db), --sql-dir PATH
 
@@ -164,7 +165,7 @@ class Migrator:
                 return text[:cut], text[cut:]
         return text, ""
 
-    def cmd_up(self, dry_run=False):
+    def cmd_up(self, dry_run=False, skip_verify=False):
         rows = self.plan()
         drift = [r for r in rows if r["state"] in ("DRIFT", "MISSING-FILE")]
         if drift:
@@ -215,7 +216,7 @@ class Migrator:
                       f"수동으로 위 INSERT 를 넣어야 재실행이 안전합니다.")
                 return 1
             print(f"   ok ({secs}s)")
-            if verify.strip():
+            if verify.strip() and not skip_verify:
                 vr = self.psql_file_text(verify, stop_on_error=False)
                 tail = "\n".join(l for l in vr.stdout.splitlines() if l.strip())[-1500:]
                 if tail:
@@ -261,6 +262,10 @@ def main():
                     default=str(Path(__file__).resolve().parent.parent / "sql"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--skip-verify", action="store_true",
+                    help="up: 각 파일의 '-- @migrate:verify' 검증절을 실행하지 않는다. "
+                         "본문(스키마)은 그대로 적용된다. 빈 DB 프로비저닝(pytest 스크래치 DB 등)에서 "
+                         "검증절의 \\! 서브셸이 다른 DB 로 접속하는 부작용을 피하려는 용도.")
     ap.add_argument("--up-to", metavar="NNN",
                     help="baseline: 이 버전까지만 '적용됨'으로 기록 (그 이후는 up 이 실제 적용)")
     a = ap.parse_args()
@@ -268,7 +273,7 @@ def main():
     if a.command == "status":
         sys.exit(m.cmd_status())
     if a.command == "up":
-        sys.exit(m.cmd_up(dry_run=a.dry_run))
+        sys.exit(m.cmd_up(dry_run=a.dry_run, skip_verify=a.skip_verify))
     if a.command == "baseline":
         sys.exit(m.cmd_baseline(force=a.force, up_to=a.up_to))
 

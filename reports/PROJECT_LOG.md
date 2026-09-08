@@ -9,13 +9,17 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (운영 준비성 — README/requirements/.env.example + 로그 로테이션 + systemd 가이드 + CI)_
+_최종 갱신: 2026-09-08 KST (pytest 회귀 스위트 신설 — 검증절 8가지 자동화 + CI 연동)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
 - 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V037__*.sql`** 적용.
-  `migrate.py status` → **적용됨 37 · 미적용 0 · drift 0**. 이번 라운드는 스키마 변경 없음(문서/설정/CI만).
-  빈 DB 재현은 `.github/workflows/migrate-check.yml` 이 매 push/PR 마다 자동 검증(로컬 스크래치 DB 로도 확인함).
+  `migrate.py status` → **적용됨 37 · 미적용 0 · drift 0**. 이번 라운드도 스키마 변경 없음
+  (`tests/` 신설 + `migrate.py --skip-verify` 플래그 + 문서/CI). 빈 DB 재현 + pytest 는
+  `.github/workflows/migrate-check.yml` 이 매 push/PR 마다 자동 검증.
+- **자동 회귀 테스트**: `tests/` 의 pytest 스위트가 검증절 8가지(V018/V023/V028/V029/V015/
+  V033/V036/V037)를 자동 pass/fail 로 확인. 전용 스크래치 DB `security_db_pytest` 에서만
+  돌고 라이브 `security_db` 는 접속 대상이 아님(코드로 강제). 나머지 검증절은 여전히 수동.
 - **임베딩 모델**: `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원). V035 에서
   `all-MiniLM-L6-v2`(384차원)에서 교체 — 다국어 범용 모델의 한국어 주제 해상도 한계 때문.
 - **forward-only 마이그레이션 정책**: 다운(롤백) 파일 없음 = 의도된 설계. 되돌릴 땐 새 `V###`
@@ -82,6 +86,12 @@ _최종 갱신: 2026-09-08 KST (운영 준비성 — README/requirements/.env.ex
   `alert_notifier.py` 는 `RotatingFileHandler`(5MB×5), `verify_audit_chain.sh`/`backup_scheduled.sh`
   는 스크립트 자체 크기 로테이션. `sql/SYSTEMD_DEPLOYMENT_GUIDE.md`(launchd→systemd/cron).
   `.github/workflows/migrate-check.yml`(빈 DB 전체 재현 + drift 0 CI).
+- **pytest 회귀 스위트(2026-09-08)**: `tests/` — 검증절 8가지(V018 FK RESTRICT / V023 감사
+  해시체인 / V028 시간 무결성 / V029·V015 RLS / V033 제약 / V036 SIM 정리 / V037 로테이션
+  기록)를 자동 pass/fail 로. `conftest.py` 가 스크래치 DB `security_db_pytest` 를 세션마다
+  새로 만들고(`migrate.py up --skip-verify`) 끝나면 DROP. 라이브 `security_db` 는 접속 대상이
+  아니게 `_connect()` 가 dbname 을 상수로 제한. CI 에 `pytest tests/ -v` 스텝 추가.
+  `migrate.py` 에 `--skip-verify` 플래그 신설(본문만 적용, 검증절 `\!` 부작용 회피).
 
 ### 자동 스케줄 (launchd) — **6종** 모두 등록·`exit 0`
 | Label | 주기 | 스크립트 | 로그 |
@@ -158,6 +168,83 @@ _최종 갱신: 2026-09-08 KST (운영 준비성 — README/requirements/.env.ex
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 테스트: pytest 회귀 스위트 신설(8개 시나리오) + CI 연동
+
+마이그레이션 검증절(`-- @migrate:verify`)이 "사람이 눈으로 판단"하던 것 중 보안·무결성상
+중요한 8가지를 자동 pass/fail 하는 pytest 로 옮겼다. **스키마 변경 없음** — 새 `V###` 없음.
+라이브 `security_db` 는 어떤 단계에서도 접속 대상이 아니고, 전용 스크래치 DB 에서만 돈다.
+
+#### 구조
+- **`tests/conftest.py`** — 세션 스코프 픽스처 `scratch_db`:
+  - `template1` 로만 유지보수 접속 → `DROP DATABASE IF EXISTS security_db_pytest` →
+    `CREATE DATABASE security_db_pytest TEMPLATE template0` → `CREATE EXTENSION vector` →
+    `python3 scripts/migrate.py up --database security_db_pytest --skip-verify`.
+  - `yield` 후 **성공/실패 무관**하게(`finally`) `security_db_pytest` DROP. `PYTEST_KEEP_DB=1`
+    이면 디버깅용으로 남긴다.
+  - **라이브 DB 보호(코드로 강제)**: `_connect(dbname)` 은 `security_db_pytest` 와 유지보수용
+    `template1` **두 개만** 허용하고, `"security_db"` 는 명시적으로 `RuntimeError`. 테스트/픽스처
+    어디에도 dbname 을 바꿀 인자가 없다.
+  - 픽스처 `su`(슈퍼유저 커넥션, autocommit=False, 테스트 끝에 rollback) / `set_role`
+    (트랜잭션 안에서 `SET LOCAL ROLE` 걸고 빠져나올 때 rollback — 블록 자기완결).
+- **`scripts/migrate.py --skip-verify`** 신설: 본문(스키마)만 적용하고 `@migrate:verify` 절은
+  건너뛴다. 이유: 여러 검증절이 `\! psql -d security_db ...` 로 **하드코딩된 라이브 DB** 에
+  접속한다(V014/V015/V024/V037). 스크래치 DB 프로비저닝에서 이 부작용을 없애려는 것.
+- 테스트 파일 3개: `test_data_integrity.py`(#1,2,3,6,7 · 9개 함수) /
+  `test_rls_rbac.py`(#4,5 · 3개 함수) / `test_security_rotation.py`(#8 · 2개 함수) — **총 14개 함수**.
+  각 테스트는 자기가 만든 위반/조작 데이터를 트랜잭션 롤백으로 정리해 서로 간섭 없음.
+
+#### 8개 시나리오 — 각 테스트가 검증하는 것
+1. **V018 FK RESTRICT** — 이벤트가 걸린 `assets` 행, 대응이 걸린 `staff` 행을 `DELETE` 하면
+   `ForeignKeyViolation`(`23503`).
+2. **V023 감사 해시체인** — 트랜잭션 안에서 이벤트 3건 INSERT(감사 행 생성) → `fn_verify_audit_chain()`
+   0 → `trg_audit_log_no_update` 끄고 한 행 `changed_by='ATTACKER'` UPDATE → 검증 ≥1 →
+   `ROLLBACK` → 다시 0.
+3. **V028 시간 무결성** — `detected_at` 이 `2025-06-01` 인 이벤트에 대해: 과거(`2025-05-01`)
+   `action_date` 로 response INSERT → `CheckViolation`(`23514`); 이후(`2025-06-02`) → 통과;
+   기존 response 의 `action_date` 를 `2020-01-01` 로 UPDATE → `CheckViolation`.
+4. **V029 RLS(svc_event_ingest)** — `SET LOCAL ROLE svc_event_ingest` 후 `[SIM]` 접두사 없는
+   description 으로 `security_events` INSERT → `InsufficientPrivilege`(`42501`, "row-level
+   security"); `[SIM]` 붙이면 `rowcount==1`.
+5. **V015/V019 부서 스코프 RLS** — 슈퍼유저로 전체 이벤트 수와 '인프라팀' 자산 이벤트 수를
+   구하고(각각 total > infra_expected > 0 확인), `SET LOCAL ROLE dept_infra` 로 조회한
+   이벤트 수 == infra_expected, 보이는 부서 종류 == 1.
+6. **V033 제약** — `match_type='THREAT_REPORT'` 인데 `matched_event_id` 도 채운 INSERT →
+   `CheckViolation`(chk_etm_target); 같은 `(event_id, match_type, 대상)` 두 번 INSERT +
+   `ON CONFLICT DO NOTHING` → 두 번째 `rowcount==0`, 행은 1개.
+7. **V036 SIM 정리** — 트랜잭션 안에서 `[SIM]` 이벤트 1건 생성 → 그 이벤트와 실제 이벤트에
+   각각 `THREAT_REPORT` 매칭 삽입 → V036 정리 쿼리 실행 → `[SIM]` 발만 삭제, 실제 발 보존,
+   "SIM 발 THREAT_REPORT 매칭" 카운트 0.
+8. **V037 로테이션 기록** — 6개 운영 role 전부 `pg_shdescription` 에 "로테이션" 문구,
+   `pg_authid.rolpassword` 가 전부 `SCRAM-SHA-256%`.
+
+#### 로컬 실행 결과
+- `pytest tests/ -v` → **14 passed in 1.86s** (pytest 7.1.1, anaconda python 3.9).
+  `requirements-dev.txt` 핀은 `pytest>=7.4`(CI 기준); 로컬 7.1.1 도 이상 없이 통과.
+- **일부러 깨뜨려 fail 확인**: 별도 throwaway DB(`security_db_pytest_brk`)에서
+  `ALTER TABLE responses DISABLE TRIGGER trg_responses_time_check` →
+  V028 "과거 action_date INSERT 거부" 로직이 **거부 안 함(False)** = 그 상태면 pytest 가
+  FAIL. `ENABLE TRIGGER` 로 원복 → 다시 거부(True). throwaway DB 삭제. → "테스트가 진짜
+  트리거 동작을 검증하고 있다" 확인.
+- **라이브 `security_db` 무변화**: 라운드 전후 `current_database()=security_db`,
+  `schema_migrations 37`, `migrate.py status` 적용됨 37 · drift 0, `fn_verify_audit_chain()`
+  breaks 0. (`security_events`/`event_threat_matches` 행 수는 늘었으나 이는 상시 도는
+  launchd `synth`/`threatlink` 잡의 정상 적재이고 테스트와 무관 — 테스트는 `security_db_pytest`
+  / `security_db_pytest_brk` 만 건드렸고 둘 다 삭제됨.) 스크래치 DB 잔존 없음.
+
+#### CI 연동
+- `.github/workflows/migrate-check.yml` 에 스텝 2개 추가(기존 job 재사용): `pip install -r
+  requirements-dev.txt` → `python3 -m pytest tests/ -v`. 서비스 컨테이너
+  `pgvector/pgvector:pg15` 안에서 conftest 가 `security_db_pytest` 를 별도로 띄우므로 기존
+  "빈 DB 에 security_db 재현" 흐름과 안 부딪힘. pytest 실패 시 job fail.
+- 로컬 YAML 검증: `yaml.safe_load` OK, steps 9개.
+- 실제 GitHub Actions 클라우드 실행은 이 커밋 push 로 트리거 — 결과는 다음 라운드 확인.
+
+#### 기타
+- `RUN_ORDER.md`: 「검증절의 pytest 이관」 섹션 추가(8개 표 + "나머지는 수동" 명시),
+  「관련 문서」에 `tests/` 추가, `--skip-verify` 설명 추가.
+- `README.md`: 「테스트 실행」 섹션 추가. `requirements-dev.txt` 에 `pytest>=7.4`.
+- `.gitignore`: `.pytest_cache/` 추가(pytest 가 루트에 만드는 캐시 폴더).
 
 ### 2026-09-08 KST — 운영 준비성: README/환경설정 + 로그 로테이션 + systemd 가이드 + CI 재현성
 

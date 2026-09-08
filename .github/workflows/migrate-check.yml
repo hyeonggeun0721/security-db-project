@@ -1,9 +1,11 @@
 name: migrate-check
 
-# 빈 DB 에 V001~최신 마이그레이션을 한 흐름으로 재현하고, drift 0 / 미적용 0 을 검증한다.
-# (RUN_ORDER.md 의 "빈 DB 에 up 하면 전체가 한 흐름으로 적용된다" 를 CI 로 자동 확인)
+# (1) 빈 DB 에 V001~최신 마이그레이션을 한 흐름으로 재현하고 drift 0 / 미적용 0 을 검증.
+#     (RUN_ORDER.md 의 "빈 DB 에 up 하면 전체가 한 흐름으로 적용된다" 를 CI 로 자동 확인)
+# (2) pytest 회귀 스위트(tests/) 실행 — conftest 가 별도 스크래치 DB(security_db_pytest)를
+#     그 컨테이너 안에 만들어 8가지 보안/무결성 검증절을 자동 pass/fail 로 확인.
 #
-# 범위: 스키마 재현성만. sentence-transformers 임베딩 모델 로딩/다운로드가 필요한
+# 범위: 스키마 재현성 + pytest. sentence-transformers 임베딩 모델 로딩/다운로드가 필요한
 #       스크립트(event_threat_linker.py 등)는 CI 에서 실행하지 않는다(너무 무겁다).
 
 on:
@@ -72,3 +74,9 @@ jobs:
             exit 1
           fi
           echo "OK: 빈 DB 재현 성공, drift 없음"
+
+      - name: 개발 의존성(pytest) 설치
+        run: pip install -r requirements-dev.txt
+
+      - name: pytest 회귀 스위트 (별도 스크래치 DB security_db_pytest)
+        run: python3 -m pytest tests/ -v

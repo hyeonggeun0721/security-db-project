@@ -18,7 +18,8 @@
 | [`../PERFORMANCE_NOTES.md`](../PERFORMANCE_NOTES.md) | 인덱스 전략, RLS 함수 호출 비용, 병목 후보 |
 | [`TLS_SSL_GUIDE.md`](TLS_SSL_GUIDE.md) | 운영 전환 시 TLS/SSL + pg_hba scram 절차 (현재 미적용) |
 | [`SYSTEMD_DEPLOYMENT_GUIDE.md`](SYSTEMD_DEPLOYMENT_GUIDE.md) | launchd → systemd timer / cron 이식 가이드 (현재 미적용) |
-| [`../.github/workflows/migrate-check.yml`](../.github/workflows/migrate-check.yml) | 빈 DB 에 전체 마이그레이션 재현 + drift 0 자동 검증 (CI) |
+| [`../tests/`](../tests/) | pytest 회귀 스위트 — 검증절 8가지를 자동 pass/fail 로 (스크래치 DB 전용). 아래 「검증절의 pytest 이관」 참고 |
+| [`../.github/workflows/migrate-check.yml`](../.github/workflows/migrate-check.yml) | 빈 DB 전체 마이그레이션 재현 + drift 0 + pytest 자동 검증 (CI) |
 | [`../.env.example`](../.env.example) | 코드가 읽는 환경변수 전체 목록·용도 |
 
 ## 적용 방법: `scripts/migrate.py`
@@ -37,11 +38,36 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
   스키마를 바꾸려면 기존 파일을 고치지 말고 **새 `V###` 파일을 추가**한다.
 - 파일에 `-- @migrate:verify` 마커가 있으면 그 위=본문(`ON_ERROR_STOP=1`),
   아래=검증절(`ON_ERROR_STOP=0`, 실패해도 마이그레이션은 성공). 의도적 ERROR·`\!` 서브셸은 검증절에 둔다.
+  `up --skip-verify` 를 주면 검증절을 건너뛰고 본문(스키마)만 적용한다 — pytest 스크래치 DB
+  프로비저닝처럼 검증절 `\!` 서브셸이 다른 DB 로 접속하는 부작용을 피해야 할 때 쓴다.
 - 빈 DB 에 `up` 하면 V001→최신(V037) 전체가 한 흐름으로 적용된다. QA 재현성 테스트
   (2026-09-07, 당시 32개)에서 확인했고, 2026-09-08부터 `.github/workflows/migrate-check.yml`
   이 매 push/PR 마다 이걸 자동으로 재현·검증한다(drift 0 / 미적용 0 이 아니면 CI 실패).
 - Flyway(13.5.0, brew 설치 가능)는 SQL 을 JDBC 로 실행해 `\echo`/`\!`/`\d` psql 메타명령을
   못 읽는다(V003 에서 `syntax error at or near "\"`). 24/26 파일이 메타명령에 의존하므로 자체 러너를 쓴다.
+
+## 검증절의 pytest 이관 (부분)
+
+`-- @migrate:verify` 섹션은 원래 "사람이 눈으로 읽고 판단"하는 방식이다. 2026-09-08부터
+그중 **보안·무결성상 가장 중요한 8가지**를 자동 pass/fail 하는 pytest(`tests/`)로 옮겼다.
+스위트는 **전용 스크래치 DB `security_db_pytest` 에서만** 돌고(라이브 `security_db` 는 접속
+대상이 아님, 코드로 강제), CI 가 매 push/PR 마다 함께 실행한다.
+
+| # | 마이그레이션 | pytest 가 검증하는 것 | 파일 |
+|---|---|---|---|
+| 1 | V018 | `security_events.asset_id`→assets / `responses.staff_id`→staff 의 `ON DELETE RESTRICT` 가 실제로 DELETE 를 거부(`23503`) | `tests/test_data_integrity.py` |
+| 2 | V023 | `fn_verify_audit_chain()` 이 무결 시 0, `audit_log` 한 행 UPDATE 조작 시 ≥1, 롤백 후 다시 0 | 〃 |
+| 3 | V028 | `responses.action_date < 이벤트 detected_at` 인 INSERT·UPDATE 가 트리거에 거부(`23514`), 정상 시각은 통과 | 〃 |
+| 6 | V033 | `chk_etm_target` CHECK 위반(THREAT_REPORT 인데 `matched_event_id` 도 채움) 거부, `uq_etm_dedup` 중복 INSERT 가 `ON CONFLICT DO NOTHING` 으로 무시 | 〃 |
+| 7 | V036 | `[SIM]` 이벤트 발 `THREAT_REPORT` 매칭을 정리 쿼리가 지우고(실제 이벤트 발은 보존), 정리 후 SIM 발 카운트 0 | 〃 |
+| 4 | V029 | `svc_event_ingest` role 로 `[SIM]` 접두사 없는 description INSERT 가 RLS `WITH CHECK` 에 거부(`42501`), `[SIM]` 이면 통과 | `tests/test_rls_rbac.py` |
+| 5 | V015/V019 | `dept_infra` role 조회 시 '인프라팀' 자산의 `security_events` 만 보임(다른 부서 이벤트는 안 보임) | 〃 |
+| 8 | V037 | 6개 운영 role 전부 `COMMENT ON ROLE` 에 "로테이션" 문구 + `pg_authid.rolpassword` 가 `SCRAM-SHA-256%` | `tests/test_security_rotation.py` |
+
+**나머지 마이그레이션의 `-- @migrate:verify` 는 여전히 수동 확인용으로 남아 있다** —
+전부 옮긴 게 아니다. `migrate.py up`(검증절 포함) 출력이나 파일을 직접 봐야 하는 항목이
+대부분이다(예: V018 의 CASCADE 전파 테스트, V023 의 backfill 통계, V024/V025 의 권한·매트뷰
+출력 등).
 
 ## forward-only 마이그레이션 정책
 

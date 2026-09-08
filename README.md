@@ -88,16 +88,37 @@ streamlit run scripts/soc_dashboard.py
 
 ---
 
+## 테스트 실행
+
+`tests/` 는 pytest 회귀 스위트다. 마이그레이션 검증절(`-- @migrate:verify`) 중 보안·무결성상
+중요한 8가지(V018 FK RESTRICT / V023 감사 해시체인 / V028 시간 무결성 / V029·V015 RLS /
+V033 제약 / V036 SIM 정리 / V037 비밀번호 로테이션 기록)를 자동 pass/fail 로 옮긴 것.
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+- **라이브 `security_db` 는 건드리지 않는다.** 세션마다 전용 스크래치 DB `security_db_pytest`
+  를 새로 만들어(`migrate.py up --skip-verify`) 거기서만 돌고, 끝나면 DROP 한다. 접속 가능한
+  DB 이름이 상수로 박혀 있어 다른 DB 로 향할 수 없다.
+- `psql` 이 `PATH` 에 있어야 한다(스크래치 DB 프로비저닝에 씀). 디버깅 시
+  `PYTEST_KEEP_DB=1 pytest ...` 로 스크래치 DB 를 남길 수 있다.
+- CI(`migrate-check.yml`)가 매 push/PR 마다 이 스위트도 함께 돌린다.
+
+---
+
 ## 문서 지도
 
 | 문서 | 내용 |
 |---|---|
-| [`sql/RUN_ORDER.md`](sql/RUN_ORDER.md) | **마이그레이션 적용 순서·의존관계의 정본.** forward-only 정책, 숨은 의존성, 재실행 주의 |
+| [`sql/RUN_ORDER.md`](sql/RUN_ORDER.md) | **마이그레이션 적용 순서·의존관계의 정본.** forward-only 정책, 숨은 의존성, 재실행 주의, pytest 로 옮긴 검증절 목록 |
 | [`reports/PROJECT_LOG.md`](reports/PROJECT_LOG.md) | 라운드별 작업 히스토리 + "현재 상태" 스냅샷 |
 | [`PERFORMANCE_NOTES.md`](PERFORMANCE_NOTES.md) | 인덱스 전략, RLS 함수 호출 비용, 병목 후보 |
 | [`sql/TLS_SSL_GUIDE.md`](sql/TLS_SSL_GUIDE.md) | 운영 전환 시 TLS/SSL + pg_hba scram 적용 절차 (현재 미적용) |
 | [`sql/SYSTEMD_DEPLOYMENT_GUIDE.md`](sql/SYSTEMD_DEPLOYMENT_GUIDE.md) | launchd → systemd timer / cron 이식 가이드 (현재 미적용) |
-| `.github/workflows/migrate-check.yml` | 빈 DB 에 전체 마이그레이션 재현 + drift 0 자동 검증 (CI) |
+| `tests/` | pytest 회귀 스위트 (8개 시나리오, 스크래치 DB 전용) |
+| `.github/workflows/migrate-check.yml` | 빈 DB 전체 마이그레이션 재현 + drift 0 + pytest 자동 검증 (CI) |
 
 ---
 
