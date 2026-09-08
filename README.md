@@ -28,6 +28,20 @@
 
 작업 히스토리(무엇을 왜 바꿨는지)는 [`reports/PROJECT_LOG.md`](reports/PROJECT_LOG.md) 에 라운드별로 남아 있다.
 
+### ERD (핵심 스키마)
+
+![ERD — 보안 이벤트 및 취약점 관리 시스템](erd.png)
+
+V001 의 핵심 6개 테이블과 관계다: `assets`(자산) · `vulnerabilities`(취약점) ·
+`asset_vulnerabilities`(자산–취약점 N:M 매핑, `detected_date`/`status` 포함) ·
+`security_events`(자산에서 발생, `vuln_id` 로 원인 취약점을 선택적으로 연결) ·
+`responses`(이벤트 대응 조치, `staff` 담당자 연결) · `staff`(담당자).
+
+고도화 단계에서 추가된 마스터 테이블(`departments` — V019, `event_types` — V027)과
+감사·매칭·외부연동 테이블(`audit_log`, `threat_reports`, `event_threat_matches`,
+`nvd_cve_details`, `scan_runs`, `alert_log` 등)은 지면상 이 그림에서 생략했다 —
+현재 전체 구조는 [`sql/schema_dump.sql`](sql/schema_dump.sql) 을 참고한다.
+
 ---
 
 ## 사전 요구사항
@@ -119,6 +133,8 @@ pytest tests/ -v
 | [`sql/SYSTEMD_DEPLOYMENT_GUIDE.md`](sql/SYSTEMD_DEPLOYMENT_GUIDE.md) | launchd → systemd timer / cron 이식 가이드 (현재 미적용) |
 | `tests/` | pytest 회귀 스위트 (8개 시나리오, 스크래치 DB 전용) |
 | `.github/workflows/migrate-check.yml` | 빈 DB 전체 마이그레이션 재현 + drift 0 + pytest 자동 검증 (CI) |
+
+> 프로젝트 초기 단계의 스냅샷/스크래치 출력은 [`reports/archive/`](reports/archive/) 에 있다(활성 문서 아님, 낡았을 수 있음).
 
 ---
 

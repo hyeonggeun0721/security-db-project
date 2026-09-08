@@ -9,7 +9,7 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (pytest 회귀 스위트 신설 — 검증절 8가지 자동화 + CI 연동)_
+_최종 갱신: 2026-09-08 KST (저장소 정리 — ERD 중복 제거 + README ERD 섹션 + 낡은 스크래치 파일 아카이브)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
@@ -92,6 +92,10 @@ _최종 갱신: 2026-09-08 KST (pytest 회귀 스위트 신설 — 검증절 8�
   새로 만들고(`migrate.py up --skip-verify`) 끝나면 DROP. 라이브 `security_db` 는 접속 대상이
   아니게 `_connect()` 가 dbname 을 상수로 제한. CI 에 `pytest tests/ -v` 스텝 추가.
   `migrate.py` 에 `--skip-verify` 플래그 신설(본문만 적용, 검증절 `\!` 부작용 회피).
+- **저장소 정리(2026-09-08, 포트폴리오 대비)**: 바이트 동일 중복이던 `erd_1.png` 삭제(`erd.png`
+  하나만 유지), `README.md` 「아키텍처 개요」에 ERD 이미지 섹션 추가. 초기 스냅샷/스크래치 출력
+  (`roles_list.txt`, `example_query_results.txt`)을 루트 → `reports/archive/` 로 이동 + 그 폴더에
+  "낡았을 수 있음, 최신은 PROJECT_LOG/schema_dump 참고" 안내 `README.md` 신설.
 
 ### 자동 스케줄 (launchd) — **6종** 모두 등록·`exit 0`
 | Label | 주기 | 스크립트 | 로그 |
@@ -168,6 +172,37 @@ _최종 갱신: 2026-09-08 KST (pytest 회귀 스위트 신설 — 검증절 8�
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 저장소 정리(포트폴리오 대비): ERD 중복 제거 + README ERD 섹션 + 낡은 파일 아카이브
+
+스키마/DB 변경 없음. 순수 파일 정리.
+
+#### 1. ERD 중복 제거 + README ERD 섹션
+- `erd.png` 와 `erd_1.png` 가 **바이트 단위로 동일**(md5 `ea308b4749…` 일치)했고 둘 다 커밋돼
+  있는데 README 어디서도 참조가 없었다. `git rm erd_1.png` → `erd.png` 하나만 유지.
+- `README.md` 「아키텍처 개요」에 **`### ERD (핵심 스키마)`** 하위 섹션 신설:
+  `![ERD …](erd.png)` 상대경로 이미지(루트 기준) + 설명. 이미지를 열어 확인한 내용 기준으로,
+  ERD 가 V001 핵심 6개 테이블(`assets` / `vulnerabilities` / `asset_vulnerabilities` N:M /
+  `security_events` / `responses` / `staff`)과 그 관계만 담고 있고, 이후 추가된 마스터·감사·매칭·
+  외부연동 테이블은 생략돼 있음을 명시(전체 구조는 `sql/schema_dump.sql` 로 위임).
+
+#### 2. 낡은 스크래치 파일 아카이브
+- `reports/archive/` 신설. `git mv` 로 이동:
+  - `roles_list.txt` (초기 `\du` + `resource_limits.sql` 기준 연결제한 psql 덤프 — 정적이라
+    이후 role 변경 미반영)
+  - `example_query_results.txt` (**"전체 17개 SQL 파일 적용" = V017 시절** 기준 예제쿼리 검증
+    결과 — 현재 V037 까지라 완전히 낡음)
+- `reports/archive/README.md` 신설: "초기 스냅샷/스크래치, 현재 상태와 안 맞을 수 있음 —
+  참고용. 최신은 `PROJECT_LOG.md` 「현재 상태」 / `sql/schema_dump.sql` / `sql/RUN_ORDER.md`."
+- 루트 `README.md` 「문서 지도」 아래에 한 줄 인용구로 "초기 스냅샷은 `reports/archive/` 참고"
+  만 언급(활성 문서 표에는 넣지 않음).
+
+#### 확인
+- `git status`: `D erd_1.png`, `R roles_list.txt → reports/archive/…`, `R example_query_results.txt
+  → reports/archive/…`, `M README.md`, `M reports/PROJECT_LOG.md`, 새 `reports/archive/README.md`
+  전부 스테이징됨.
+- README 의 `erd.png` 는 루트 기준 상대경로라 GitHub 에서 정상 렌더링(파일이 루트에 그대로 있음).
+- `sql/RUN_ORDER.md` 는 스키마/문서지도와 무관해 갱신 안 함(이미 최신).
 
 ### 2026-09-08 KST — 테스트: pytest 회귀 스위트 신설(8개 시나리오) + CI 연동
 
