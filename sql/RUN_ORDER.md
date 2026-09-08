@@ -3,6 +3,10 @@
 > **프로젝트 경로**: `~/security_db_project/` (2026-09-07 `~/Desktop/security_db_project` 에서 이동).
 > macOS TCC 가 `~/Desktop`/`~/Documents`/`~/Downloads` 하위를 백그라운드 에이전트(launchd)로부터
 > 차단하기 때문. 이동 후 launchd 자동 스케줄 2종이 정상 등록·실행됨(아래 "자동 스케줄" 참고).
+>
+> **Git 워크플로**: 2026-09-08 Git 저장소 초기화 + GitHub 비공개 저장소 연결. 이전 라운드들은
+> 단계별로 커밋 히스토리를 재구성함(각 커밋 날짜를 실제 작업 시점에 맞춤). **이제부터 매 작업
+> 라운드가 끝날 때마다 `git add -A && git commit`(origin 연결 시 `git push`)까지 하는 것을 기본으로 한다.**
 
 ## 적용 방법: `scripts/migrate.py`
 

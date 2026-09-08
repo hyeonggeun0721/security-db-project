@@ -9,13 +9,16 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-07 22:30 KST_
+_최종 갱신: 2026-09-08 KST_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
 - 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V032__*.sql`** 적용.
   `migrate.py status` → **적용됨 32 · 미적용 0 · drift 0**
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
+- **Git 관리 중**: 2026-09-08 저장소 초기화, 단계별 커밋 히스토리 재구성(14 커밋).
+  이제부터 매 작업 라운드 종료 시 `git add -A && git commit` (+ `git push`) 를 기본으로 한다.
+  대용량/자격증명은 `.gitignore` 로 제외(`db_backups/`, `logs/`, `*.dump`, `.env*`, `*.pem/key`, `__pycache__`).
 
 ### 완료된 항목 (누적)
 - 핵심 스키마 + pgvector 벡터검색 + 6대 고도화(감사로그/RBAC/CVSS스코어링/RLS/이상탐지/ATT&CK)
@@ -81,6 +84,62 @@ _최종 갱신: 2026-09-07 22:30 KST_
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — Git 저장소 초기화 + 단계별 커밋 히스토리 재구성 + GitHub 비공개 저장소
+
+#### 1. 저장소 초기화
+- `~/security_db_project/` 는 그동안 git 관리가 아니었음(`.gitignore` 만 존재). `git init -b main`.
+- `git config` 사용자: `hyeonggeun <polkmn0721@gmail.com>` (전역 설정 사용).
+
+#### 2. 단계별 커밋 재구성 (총 14 커밋, 실제 작업 시점으로 backdate)
+`schema_migrations.applied_at` + V*.sql 파일 mtime + `PROJECT_LOG.md` 히스토리를 근거로
+논리적 단계별 커밋. `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` 를 실제 시점에 맞춤:
+
+| 날짜 | 커밋 | 포함 |
+|---|---|---|
+| 2026-09-02 | 핵심 스키마 + 기본 뷰 | V001, ERD, .gitignore |
+| 2026-09-03 | pgvector 벡터 유사도 검색 | V002 + 임베딩/검색 스크립트 |
+| 2026-09-03 | 고도화 6종 | V003–V008 |
+| 2026-09-03 | 데이터 확충 + 트랜잭션 + 인덱스 | V009–V011 |
+| 2026-09-04 | 실무보완 5종 + 백업복구 | V012–V016, `backup_restore.sh` |
+| 2026-09-04 | NVD 연동 + SOC 대시보드 | V017 + `nvd_*.py`, `soc_dashboard.py`, 대시보드 스크린샷 |
+| 2026-09-07 | QA 라운드: FK/departments/CHECK | V018–V020 |
+| 2026-09-07 | 보안 하드닝 + TLS 가이드 | V021–V026, `TLS_SSL_GUIDE.md` |
+| 2026-09-07 | migrate.py 도구화 + 백업자동화 + V027/V028 | `migrate.py`, `RUN_ORDER.md`, `schema_dump.sql`, backup plist |
+| 2026-09-07 | 합성 이벤트(V029) + 프로젝트 홈 이동 | V029, `generate_synthetic_events.py`, synth plist |
+| 2026-09-07 | 복구드릴/SIM필터/감사자동검증/성능 | `verify_audit_chain.sh`, `PERFORMANCE_NOTES.md`, `PROJECT_LOG.md`, SIM 스크린샷 |
+| 2026-09-07 | KISA 스캐너 연동(V030) | V030, `kisa_scanner.py`, `import_kisa_results.py`, `reports/kisa_scans/` |
+| 2026-09-07 | EPSS 연동(V031) | V031, `epss_sync.py`, EPSS 스크린샷 |
+| 2026-09-07 | 실시간 알림(V032) + EPSS 스케줄 | V032, `alert_notifier.py`, `alert_poller.py`, 2개 plist |
+| 2026-09-08 | Git 워크플로 + 문서 최신화 | 이 커밋 (`RUN_ORDER.md` Git 메모, `PROJECT_LOG.md`) |
+
+- 커밋 메시지: 각 단계 "무엇을 왜" 1~3줄 한글.
+- 재구성 한계: `RUN_ORDER.md`/`schema_dump.sql`/`PROJECT_LOG.md` 는 최종본만 존재해 그 태어난 커밋에
+  최신 내용이 들어감(중간 상태 재현 불가). 마이그레이션 파일·스크립트는 단계별로 정확히 배치됨.
+
+#### 3. `.gitignore` 재점검
+- 제외 확인: `db_backups/`(1.1MB, 덤프+roles), `logs/`(alerts/audit_verify), `*.dump`, `__pycache__`, `.venv/`,
+  `.env*`, `.pgpass`, `*.pem/*.key`, `*secret*`, `*credential*`, `.DS_Store`.
+- **포함**: `screenshots/`(7.8MB, 16장 — 포트폴리오용), `reports/kisa_scans/*.log`(스캔 증적, `!` 예외처리),
+  `sql/*.sql`, `sql/schema_dump.sql`.
+- 민감파일 스캔: `.env`/`.pgpass`/자격증명 파일 없음 확인. `auth_hardening.sql` 의 `Xxx#Tmp-2026!chg` 는
+  "임시 예시 비밀번호"(운영 반영 시 교체 전제)라 커밋 대상 유지.
+- 추적 파일 86개.
+
+#### 4. GitHub 비공개 저장소
+- `gh` CLI 는 이 세션에서 `brew install gh` 로 설치했으나 **미인증**(`gh auth status` → not logged in).
+- `gh auth login` 은 브라우저/디바이스코드 대화형이라 **사용자가 직접 실행 필요**. 아래 「다음 할 일」 참고.
+- 로컬 커밋 14개는 완료. 인증 후 `gh repo create` + `git push` 만 하면 됨.
+
+#### 다음 할 일 (사용자)
+```
+gh auth login                       # 브라우저 로그인 (GitHub.com, HTTPS, 프로토콜 git)
+gh repo create security-db-project --private --source=. --remote=origin --push
+# (repo 이름 대안: security-db-soc, security-event-vuln-db 등)
+```
+그 다음부터는 매 라운드 종료 시 `git add -A && git commit -m "..." && git push`.
+
+---
 
 ### 2026-09-07 22:30 KST — 실시간 알림/에스컬레이션 파이프라인 + EPSS 재동기화 스케줄 (V032)
 
