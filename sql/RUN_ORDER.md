@@ -8,6 +8,19 @@
 > 단계별로 커밋 히스토리를 재구성함(각 커밋 날짜를 실제 작업 시점에 맞춤). **이제부터 매 작업
 > 라운드가 끝날 때마다 `git add -A && git commit`(origin 연결 시 `git push`)까지 하는 것을 기본으로 한다.**
 
+## 관련 문서
+
+| 문서 | 내용 |
+|---|---|
+| [`../README.md`](../README.md) | 프로젝트 진입점 — 5분 퀵스타트, 아키텍처 개요, 스크립트/자동화 표 |
+| **이 문서 (`RUN_ORDER.md`)** | 마이그레이션 적용 순서·의존관계의 **정본**, forward-only 정책, 숨은 의존성 |
+| [`../reports/PROJECT_LOG.md`](../reports/PROJECT_LOG.md) | 라운드별 작업 히스토리 + "현재 상태" 스냅샷 |
+| [`../PERFORMANCE_NOTES.md`](../PERFORMANCE_NOTES.md) | 인덱스 전략, RLS 함수 호출 비용, 병목 후보 |
+| [`TLS_SSL_GUIDE.md`](TLS_SSL_GUIDE.md) | 운영 전환 시 TLS/SSL + pg_hba scram 절차 (현재 미적용) |
+| [`SYSTEMD_DEPLOYMENT_GUIDE.md`](SYSTEMD_DEPLOYMENT_GUIDE.md) | launchd → systemd timer / cron 이식 가이드 (현재 미적용) |
+| [`../.github/workflows/migrate-check.yml`](../.github/workflows/migrate-check.yml) | 빈 DB 에 전체 마이그레이션 재현 + drift 0 자동 검증 (CI) |
+| [`../.env.example`](../.env.example) | 코드가 읽는 환경변수 전체 목록·용도 |
+
 ## 적용 방법: `scripts/migrate.py`
 
 sql/ 의 마이그레이션은 `V<번호>__<이름>.sql` 로 번호가 매겨져 있고, **`migrate.py`** 로 적용한다.
@@ -24,9 +37,26 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
   스키마를 바꾸려면 기존 파일을 고치지 말고 **새 `V###` 파일을 추가**한다.
 - 파일에 `-- @migrate:verify` 마커가 있으면 그 위=본문(`ON_ERROR_STOP=1`),
   아래=검증절(`ON_ERROR_STOP=0`, 실패해도 마이그레이션은 성공). 의도적 ERROR·`\!` 서브셸은 검증절에 둔다.
-- 빈 DB 에 `up` 하면 V001→V032 전체가 한 흐름으로 적용된다. QA 재현성 테스트(2026-09-07, 32개)에서 확인.
+- 빈 DB 에 `up` 하면 V001→최신(V037) 전체가 한 흐름으로 적용된다. QA 재현성 테스트
+  (2026-09-07, 당시 32개)에서 확인했고, 2026-09-08부터 `.github/workflows/migrate-check.yml`
+  이 매 push/PR 마다 이걸 자동으로 재현·검증한다(drift 0 / 미적용 0 이 아니면 CI 실패).
 - Flyway(13.5.0, brew 설치 가능)는 SQL 을 JDBC 로 실행해 `\echo`/`\!`/`\d` psql 메타명령을
   못 읽는다(V003 에서 `syntax error at or near "\"`). 24/26 파일이 메타명령에 의존하므로 자체 러너를 쓴다.
+
+## forward-only 마이그레이션 정책
+
+**이 프로젝트에 다운(롤백) 마이그레이션 파일이 없는 것은 실수가 아니라 의도된 설계다.**
+
+- **적용된 마이그레이션 파일은 불변**이다(`migrate.py` 가 sha256 로 강제 — 수정하면 drift 로
+  `up` 이 막힌다). 잘못된 걸 되돌릴 때는 파일을 고치거나 지우지 않고, **역작업을 하는 새
+  `V###` 파일을 추가**한다. 실제 사례: `V036` 이 `V033` 이 잘못 저장한 매칭 데이터를 정리했고,
+  `V037` 이 `V016` 의 노출 비밀번호를 무력화했다 — 둘 다 앞 파일은 그대로 두고 뒤에 붙였다.
+- **왜 forward-only 가 더 안전한가**: (1) 이 시스템의 핵심 가치가 감사 추적(`audit_log`
+  해시체인)인데, 다운 스크립트로 스키마를 되감으면 "언제 무엇이 어떻게 바뀌었나"의 선형
+  기록이 끊긴다. (2) 다운 스크립트는 업만큼 자주 테스트되지 않아 정작 사고 시점에 못 믿는다.
+  (3) 롤백 대신 "역방향 change 를 새로 적용"하면 그 되돌림 자체도 이력에 남아 재현 가능하다.
+- 운영에서 배포 직후 문제가 발견되면: 즉시 대응은 **마지막 정상 백업으로 복구**
+  (`db_backups/`, `backup_scheduled.sh`), 항구적 수정은 **새 `V###`** 로.
 
 ## 순서·의존성 표
 

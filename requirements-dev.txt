@@ -1,0 +1,10 @@
+# security_db — 개발 보조 도구 (운영 파이프라인에는 쓰이지 않음)
+# 설치:  pip install -r requirements-dev.txt
+# 먼저 운영 의존성을 깔 것:  pip install -r requirements.txt
+
+-r requirements.txt
+
+# --- 대시보드 스크린샷 자동화 (scripts/_shoot_dashboard.py) ---
+#     Streamlit 대시보드를 헤드리스 브라우저로 열어 섹션별 PNG 를 뜬다. 포트폴리오/문서용.
+#     설치 후:  playwright install chromium
+playwright>=1.40

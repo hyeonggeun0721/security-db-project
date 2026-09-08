@@ -19,22 +19,33 @@ CLI:
 import argparse
 import datetime as dt
 import json
+import logging
 import os
 import smtplib
 import subprocess
 import sys
 from email.mime.text import MIMEText
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 PROJ = Path(__file__).resolve().parent.parent
 LOG_DIR = PROJ / "logs"
 ALERT_LOG = LOG_DIR / "alerts.log"
 
+# logs/alerts.log 에 항상 기록하되 무한 append 되지 않도록 5MB 씩 5개까지 회전한다
+# (alerts.log, alerts.log.1 ... alerts.log.5). 라인 포맷/내용은 기존과 동일하게 유지.
+LOG_DIR.mkdir(exist_ok=True)
+_logger = logging.getLogger("alert_notifier")
+_logger.setLevel(logging.INFO)
+_logger.propagate = False
+if not _logger.handlers:
+    _h = RotatingFileHandler(ALERT_LOG, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+    _h.setFormatter(logging.Formatter("%(message)s"))  # 타임스탬프는 메시지에 이미 포함
+    _logger.addHandler(_h)
+
 
 def _log(line):
-    LOG_DIR.mkdir(exist_ok=True)
-    with open(ALERT_LOG, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    _logger.info(line)
 
 
 def _macos(title, message, subtitle=None):

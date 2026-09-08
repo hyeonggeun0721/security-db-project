@@ -1,0 +1,74 @@
+name: migrate-check
+
+# 빈 DB 에 V001~최신 마이그레이션을 한 흐름으로 재현하고, drift 0 / 미적용 0 을 검증한다.
+# (RUN_ORDER.md 의 "빈 DB 에 up 하면 전체가 한 흐름으로 적용된다" 를 CI 로 자동 확인)
+#
+# 범위: 스키마 재현성만. sentence-transformers 임베딩 모델 로딩/다운로드가 필요한
+#       스크립트(event_threat_linker.py 등)는 CI 에서 실행하지 않는다(너무 무겁다).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  migrate-reproduce:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15   # pgvector 내장 PostgreSQL 15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: security_db
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: psql 클라이언트 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 파이썬 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: DB 생성 + pgvector 확장
+        run: |
+          psql -v ON_ERROR_STOP=1 -d postgres  -c "CREATE DATABASE security_db;"
+          psql -v ON_ERROR_STOP=1 -d security_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: 전체 마이그레이션 적용 (V001 -> 최신)
+        run: python3 scripts/migrate.py up
+
+      - name: drift 0 / 미적용 0 검증
+        run: |
+          python3 scripts/migrate.py status | tee /tmp/migrate-status.txt
+          if ! grep -qE '미적용 0 · drift 0' /tmp/migrate-status.txt; then
+            echo "::error::migrate.py status 가 '미적용 0 · drift 0' 이 아님 — 마이그레이션 재현 실패"
+            exit 1
+          fi
+          echo "OK: 빈 DB 재현 성공, drift 없음"

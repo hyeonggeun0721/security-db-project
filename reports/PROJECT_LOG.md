@@ -9,14 +9,17 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (보안 감사 대응 V037 — V016 비밀번호 로테이션 + SOC 대시보드 로그인 게이트)_
+_최종 갱신: 2026-09-08 KST (운영 준비성 — README/requirements/.env.example + 로그 로테이션 + systemd 가이드 + CI)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
 - 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V037__*.sql`** 적용.
-  `migrate.py status` → **적용됨 37 · 미적용 0 · drift 0** (V035 임베딩 재정의, V036 매칭 정리, V037 role 비밀번호 폐기 기록)
+  `migrate.py status` → **적용됨 37 · 미적용 0 · drift 0**. 이번 라운드는 스키마 변경 없음(문서/설정/CI만).
+  빈 DB 재현은 `.github/workflows/migrate-check.yml` 이 매 push/PR 마다 자동 검증(로컬 스크래치 DB 로도 확인함).
 - **임베딩 모델**: `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원). V035 에서
   `all-MiniLM-L6-v2`(384차원)에서 교체 — 다국어 범용 모델의 한국어 주제 해상도 한계 때문.
+- **forward-only 마이그레이션 정책**: 다운(롤백) 파일 없음 = 의도된 설계. 되돌릴 땐 새 `V###`
+  로 역작업 추가(V036·V037 이 그 사례). 근거는 `RUN_ORDER.md` 「forward-only 마이그레이션 정책」.
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
 - **Git 관리 중**: 2026-09-08 저장소 초기화 + 단계별 커밋 히스토리 재구성 후
   **GitHub 비공개 저장소 연결 완료**(`origin` → `github.com/hyeonggeun0721/security-db-project`).
@@ -74,6 +77,11 @@ _최종 갱신: 2026-09-08 KST (보안 감사 대응 V037 — V016 비밀번호 
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
+- **운영 준비성(2026-09-08)**: `README.md`(진입점) · `requirements.txt`/`requirements-dev.txt`
+  (playwright 는 dev 로 분리) · `.env.example`(코드가 읽는 env 전부). 로그 무한 append 차단 —
+  `alert_notifier.py` 는 `RotatingFileHandler`(5MB×5), `verify_audit_chain.sh`/`backup_scheduled.sh`
+  는 스크립트 자체 크기 로테이션. `sql/SYSTEMD_DEPLOYMENT_GUIDE.md`(launchd→systemd/cron).
+  `.github/workflows/migrate-check.yml`(빈 DB 전체 재현 + drift 0 CI).
 
 ### 자동 스케줄 (launchd) — **6종** 모두 등록·`exit 0`
 | Label | 주기 | 스크립트 | 로그 |
@@ -134,7 +142,7 @@ _최종 갱신: 2026-09-08 KST (보안 감사 대응 V037 — V016 비밀번호 
   가 스케줄 미등록 상태. pg_cron 설치 또는 OS 크론/launchd 로 등록 필요.
 - **RLS 부서 정책의 행별 함수 호출**이 규모 확대 시 1순위 병목 (`PERFORMANCE_NOTES.md` 3-A).
   의도적으로 현재 미변경 — 수만 행대 진입 시 `department` 비정규화 또는 세션 GUC 고정.
-- `logs/audit_verify.log` 에 ALERT 트리거 테스트 흔적(`db=security_db_chaintest`) 있음 — 라이브(`db=security_db`)와 구분되므로 무해, 필요 시 로그 로테이션.
+- `logs/audit_verify.log` 에 ALERT 트리거 테스트 흔적(`db=security_db_chaintest`) 있음 — 라이브(`db=security_db`)와 구분되므로 무해. (로그 크기 로테이션은 2026-09-08 스크립트에 자체 추가됨.)
 - `alert_log` 에 테스트 알림 1건(`CRITICAL_EVENT` ref_key=`59`, 해당 이벤트는 삭제됨) — ref_key 는 텍스트라 무해, 필요 시 삭제.
 - **`nvd_status='PENDING'` 정리**: `epss_sync.py` 가 EPSS-only 행을 PENDING 으로 만들면 `nvd_sync.py` 가 SYNCED 로 정정.
   정기화하려면 05:00 `epss_sync` 잡 앞에 `nvd_sync.py` 도 등록(현재 nvd_sync 는 수동).
@@ -150,6 +158,71 @@ _최종 갱신: 2026-09-08 KST (보안 감사 대응 V037 — V016 비밀번호 
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 운영 준비성: README/환경설정 + 로그 로테이션 + systemd 가이드 + CI 재현성
+
+"현직자가 바로 인수인계 받아 쓸 수 있는" 수준으로 올리기 위한 3트랙. **스키마 변경 없음**
+(문서/설정/CI 파일만) — 새 `V###` 없음. 3트랙 전부 완료.
+
+#### 트랙 1 — README + 의존성/환경변수 정비
+- **`README.md` 신설(프로젝트 루트)**: 한 줄 소개, 아키텍처 개요표(8개 계층 → 대표 마이그레이션),
+  사전 요구사항, **5분 퀵스타트**(createdb → CREATE EXTENSION vector → `pip install -r
+  requirements.txt` → `migrate.py up`/`status` → `bootstrap_role_passwords.py` → `SOC_DASHBOARD_AUTH_HASH`
+  설정 후 `streamlit run`), launchd job 6종 표, 문서 지도, 보안 주의사항(로컬 trust / scram·V037
+  선행 / 대시보드 fail-closed).
+- **`requirements.txt` 신설**: 스크립트 import 스캔 결과 = `psycopg2-binary`, `streamlit`, `pandas`,
+  `plotly`, `bcrypt`, `requests`, `sentence-transformers`. 하한선만(`>=`), 상한 미고정.
+- **`requirements-dev.txt` 신설**: `-r requirements.txt` + `playwright`(≥1.40) — `_shoot_dashboard.py`
+  스크린샷 자동화 전용이라 운영 본체에서 분리.
+- **`.env.example` 신설**: 코드가 실제 읽는 env 전부 — `PGDATABASE`, `SOC_DASHBOARD_DB_USER`,
+  `SOC_DASHBOARD_AUTH_HASH`, `SYNTH_DB_USER`, `ALERT_INCLUDE_SIM`, `SLACK_WEBHOOK_URL`,
+  `ALERT_SMTP_HOST/PORT/USER/PASS/FROM/TO`, `NVD_API_KEY`. 각 변수에 "필수/선택 · 쓰는 스크립트" 주석.
+  `.env` 는 이미 `.gitignore` 에 걸려 있음(`git check-ignore .env` 로 재확인).
+
+#### 트랙 2 — 운영 견고성
+- **로그 로테이션**:
+  - `alert_notifier.py`: 파일 직접 append → `logging.handlers.RotatingFileHandler`
+    (`maxBytes=5_000_000`, `backupCount=5`). **라인 포맷은 기존과 완전히 동일하게 유지**
+    (`Formatter("%(message)s")` + 메시지에 타임스탬프 직접 포함). 스모크 테스트: 알림 1건 발송 →
+    `logs/alerts.log` 마지막 줄이 기존과 같은 `YYYY-MM-DD HH:MM:SS  channels=...  title=...  msg=...` 형식.
+  - `verify_audit_chain.sh` / `backup_scheduled.sh`: 쉘이라 Python 로거 불가 →
+    **스크립트 자체에 `rotate_log()` 함수 추가**(5MB 초과 시 `.1~.3` 으로 밀어냄, macOS `stat -f%z`
+    / Linux `stat -c%s` 둘 다 지원, `LOG_MAX_BYTES`/`LOG_KEEP` 로 조정 가능). `mkdir -p` 직후 호출.
+  - **선택 근거**: 이 프로젝트의 쉘 스크립트는 이미 자기완결적·방어적이다(`backup_scheduled.sh`
+    가 보존정책·TCC 대응을 스스로 담고 있음). newsyslog/logrotate 는 root + 별도 설정 파일이
+    필요해 "클론하면 바로 도는" 성질을 깬다. 그래서 **스크립트 자체 방어** 쪽을 택함. 함수를
+    비우면 OS 표준 로테이터로 넘길 수 있다고 주석에 명시.
+  - 테스트: 작은 파일 → 미회전, 6MB → `.1`, 다시 6MB → `.1`·`.2`, 없는 파일 → `set -e` 에서 exit 0.
+- **`sql/SYSTEMD_DEPLOYMENT_GUIDE.md` 신설**(`TLS_SSL_GUIDE.md` 와 같은 톤 — "지금 미적용"):
+  launchd 6종 요약, **주기 대응표**(`StartInterval` ↔ `OnUnitActiveSec` ↔ cron `*/N`,
+  `StartCalendarInterval` ↔ `OnCalendar` ↔ cron 시:분), systemd `.service`+`.timer` 예시
+  (반복형 `threatlink` / 시각고정형 `backup`), 더 가벼운 cron 한 줄씩, 이관 체크리스트.
+- **`RUN_ORDER.md` 「forward-only 마이그레이션 정책」 섹션 추가**: 다운 마이그레이션이 없는 건
+  의도된 설계 — 적용 파일 불변, 되돌릴 땐 새 `V###` 로 역작업(실사례 V036/V037). 근거 3줄:
+  (1) 감사 추적 선형성 유지 (2) 다운 스크립트는 덜 테스트돼 못 믿음 (3) 되돌림도 이력에 남아야 함.
+  운영 사고 시 즉시 대응은 백업 복구, 항구 수정은 새 `V###`.
+
+#### 트랙 3 — CI 마이그레이션 재현성
+- **`.github/workflows/migrate-check.yml` 신설**: `push`(main) + `pull_request`(main) 트리거.
+  - 서비스 컨테이너 `pgvector/pgvector:pg15`(healthcheck 포함).
+  - `postgresql-client` 설치 → `CREATE DATABASE security_db` + `CREATE EXTENSION vector` →
+    `pip install -r requirements.txt` → **`python3 scripts/migrate.py up`**(V001→최신 한 흐름) →
+    `migrate.py status` 출력에 `미적용 0 · drift 0` 없으면 `::error` + `exit 1`.
+  - 임베딩 모델 로딩이 필요한 스크립트(`event_threat_linker.py` 등)는 CI 범위 밖 — 스키마
+    재현성만 검증.
+- **로컬 검증(2026-09-08)**:
+  - YAML 유효성: `python3 -c "import yaml; yaml.safe_load(open(...))"` → OK (jobs 1, triggers
+    push/pull_request, steps 7).
+  - CI 흐름 재현: 스크래치 DB `security_db_ci` 생성 → `CREATE EXTENSION vector` →
+    `migrate.py up` → **37건 전부 적용, `적용됨 37 · 미적용 0 · drift 0`**, 검증 grep 매치 확인.
+    이후 스크래치 DB 삭제, 라이브 DB(`security_db`) 영향 없음(migs 37, chain breaks 0).
+  - 실제 GitHub Actions 클라우드 실행은 이 커밋 push 시 첫 트리거 — 결과는 다음 라운드에 확인.
+
+#### 검증 요약
+- 라이브 스키마 무변경: `migrate.py status` 적용됨 37 · drift 0 · `fn_verify_audit_chain()` breaks 0
+- `alert_notifier.py` / 두 쉘 스크립트 `py_compile` · `bash -n` 통과, 로테이션 동작 테스트 통과
+- CI 워크플로 로컬 YAML + 마이그레이션 재현 통과
+- `.gitignore`: 이번 라운드 추가 없음(이전에 `secrets/`, `Claude outputs/` 반영). `.env` 제외 재확인.
 
 ### 2026-09-08 KST — 보안(V037): 노출된 V016 비밀번호 로테이션 + SOC 대시보드 로그인 게이트
 

@@ -1,0 +1,22 @@
+# security_db — 운영 파이프라인 파이썬 의존성
+# 설치:  pip install -r requirements.txt
+# 버전은 하한선만 지정한다(상한 미고정). 표준 라이브러리(psycopg2 제외)는 여기 없음.
+
+# --- DB 접속 (모든 스크립트) ---
+psycopg2-binary>=2.9
+
+# --- SOC 대시보드 (scripts/soc_dashboard.py) ---
+streamlit>=1.30
+pandas>=1.4
+plotly>=5.18
+
+# --- 대시보드 로그인 게이트 + role 비밀번호 로테이션 ---
+#     (soc_dashboard.py 의 bcrypt 로그인, bootstrap_role_passwords.py 는 표준 secrets 만 씀)
+bcrypt>=3.2
+
+# --- 외부 API 연동 (nvd_sync.py, nvd_watch.py, epss_sync.py, alert_notifier.py Slack) ---
+requests>=2.28
+
+# --- 유사 사례 매칭 / 임베딩 (event_threat_linker.py, generate_embeddings.py, search_similar_reports.py) ---
+#     첫 실행 시 모델(jhgan/ko-sroberta-multitask, ~1GB)을 내려받는다. CI 스키마 검증에서는 제외됨.
+sentence-transformers>=2.3

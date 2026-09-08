@@ -28,7 +28,25 @@ LOG="$LOG_DIR/audit_verify.log"
 PSQL="/opt/homebrew/opt/postgresql@15/bin/psql"
 [ -x "$PSQL" ] || PSQL="$(command -v psql)"
 
+# --- 로그 크기 로테이션 (자체 방어) ----------------------------------------
+#   무한 append 를 막는다. $LOG 가 LOG_MAX_BYTES(기본 5MB) 를 넘으면
+#   $LOG.1 ~ $LOG.<LOG_KEEP> 으로 밀어낸다. macOS(stat -f%z)/Linux(stat -c%s) 모두 지원.
+#   OS 표준 로테이터(newsyslog/logrotate)를 쓰고 싶으면 이 함수를 비워도 된다.
+rotate_log() {
+    local f="$1" max="${LOG_MAX_BYTES:-5000000}" keep="${LOG_KEEP:-3}" i sz
+    [ -f "$f" ] || return 0
+    sz="$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)"
+    [ "$sz" -gt "$max" ] || return 0
+    i="$keep"
+    while [ "$i" -ge 1 ]; do
+        if [ -f "$f.$i" ]; then mv -f "$f.$i" "$f.$((i + 1))"; fi
+        i=$((i - 1))
+    done
+    mv -f "$f" "$f.1"
+}
+
 mkdir -p "$LOG_DIR"
+rotate_log "$LOG"
 TS="$(date '+%Y-%m-%d %H:%M:%S')"
 
 # 깨진 행 수
