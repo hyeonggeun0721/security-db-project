@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-backfill_event_descriptions.py — 원본(큐레이션) security_events 의 NULL description 백필
+backfill_event_descriptions.py — 원본(큐레이션) security_events description 채우기/다양화
 
 ■ 배경
   security_events.description 컬럼은 V029 에서 뒤늦게 추가됐다. 그 전에 수기로 넣은
   큐레이션 이벤트(event_id 1~30)는 description 이 NULL 로 남았고, 이후 벡터 임베딩
-  (V033, event_threat_linker.py)의 대상에서 통째로 빠져 있었다. 그래서 "실제(비-SIM)
-  이벤트끼리의 유사도 매칭 품질" 을 한 번도 확인하지 못했다.
+  (V033, event_threat_linker.py)의 대상에서 통째로 빠져 있었다.
 
-■ 이 스크립트가 하는 일
-  description IS NULL 인 이벤트를, 그 이벤트가 이미 참조하는 실제 데이터
-    - assets.asset_name / asset_type
-    - vulnerabilities.cve_id / description  (vuln_id 가 있을 때)
-    - severity / event_type / status
-    - responses.action_taken               (참고 표시용, 문장에는 넣지 않음)
-  만으로 자연스러운 한 줄 한국어 요약문을 만들어 UPDATE 한다.
+■ 두 가지 모드
+  (기본) 백필  : description IS NULL 인 이벤트를 실데이터만으로 한 줄 요약해 UPDATE.
+                 UPDATE 는 WHERE description IS NULL 로 한정 → 멱등.
+  --rewrite    : 이미 채워진 큐레이션 이벤트(event_id 1~30, non-SIM)의 description 을
+                 다시 생성해 UPDATE(WHERE event_id = %s 로 명시 지정). 2026-09-08 도입.
+                 이유: 1차 백필은 (event_type, asset, CVE) 조합이 같으면 문장이
+                 바이트 단위로 동일해져, PAST_EVENT 매칭에 유사도 정확히 1.000 이
+                 26건 생겼다. 이 모드는 문장 끝에 그 이벤트의 실제 status + 첫
+                 responses.action_taken 요지(둘 다 실데이터)를 한 조각 덧붙여
+                 같은 조합이어도 문장이 갈라지게 한다.
 
-  - 새로운 사실을 지어내지 않는다. 문장의 모든 명사는 위 컬럼에서 온다.
+■ 공통 원칙 (두 모드 모두)
+  - 새로운 사실을 지어내지 않는다. 문장의 모든 명사는 아래 컬럼에서만 온다:
+      assets.asset_name / vulnerabilities.cve_id·description(vuln_id 있을 때) /
+      severity / event_type / status / detected_at / responses.action_taken
   - '[SIM] ' 접두사를 붙이지 않는다 → 합성 이벤트와 구분 유지.
-  - UPDATE 대상은 항상  WHERE description IS NULL  로 한정 → 재실행해도 안전(멱등).
-  - 기본은 미리보기만. 실제 반영은 --apply.
 
 ■ 사용법
-  python scripts/backfill_event_descriptions.py            # 미리보기(전체)
-  python scripts/backfill_event_descriptions.py --limit 8  # 미리보기 8건
-  python scripts/backfill_event_descriptions.py --apply    # 실제 UPDATE + 커밋
+  python scripts/backfill_event_descriptions.py                 # 백필 미리보기
+  python scripts/backfill_event_descriptions.py --apply         # 백필 반영
+  python scripts/backfill_event_descriptions.py --rewrite       # 재작성 미리보기
+  python scripts/backfill_event_descriptions.py --rewrite --apply  # 재작성 반영
 
   환경변수 PGDATABASE(기본 security_db). 로컬 trust 인증.
   UPDATE 는 감사 트리거(trg_audit_security_events)를 정상적으로 발동시킨다.
@@ -32,7 +36,6 @@ backfill_event_descriptions.py — 원본(큐레이션) security_events 의 NULL
 """
 import argparse
 import os
-import sys
 
 import psycopg2
 import psycopg2.extras
@@ -40,6 +43,8 @@ import psycopg2.extras
 DB_NAME = os.environ.get("PGDATABASE", "security_db")
 
 SEV_KO = {"CRITICAL": "심각", "HIGH": "높음", "MEDIUM": "중간", "LOW": "낮음"}
+STATUS_KO = {"OPEN": "미대응 상태", "IN_PROGRESS": "대응 진행 중", "RESOLVED": "대응 완료"}
+
 
 # vulnerabilities.description 은 대부분 "... 취약점" 으로 끝난다. 뒤에서 다시 "취약점"
 # 을 붙이면 중복되므로, 표기용으로 끝의 "취약점" 만 떼어낸다(의미는 유지).
@@ -50,8 +55,33 @@ def _vshort(vdesc: str) -> str:
     return v
 
 
-def build_description(row) -> str:
-    """row 의 실제 컬럼값만으로 한 줄 요약문 생성."""
+def _action_gist(action_taken: str) -> str:
+    """responses.action_taken 의 첫 구절(쉼표/세미콜론/괄호 전)만 추려 요지로 쓴다."""
+    a = (action_taken or "").strip()
+    if not a:
+        return ""
+    for sep in (", ", "; ", " ("):
+        idx = a.find(sep)
+        if idx > 0:
+            a = a[:idx]
+            break
+    return a.strip().rstrip(".")
+
+
+def _status_tail(status: str, action_taken: str) -> str:
+    """status(+대응 요지) 를 문장 끝에 붙일 짧은 실데이터 조각으로 만든다.
+
+    같은 (event_type, asset, CVE) 여도 이 조각이 달라 문장이 갈라진다.
+    """
+    label = STATUS_KO.get(status, status)
+    gist = _action_gist(action_taken)
+    if gist:
+        return f"{label}(대응 요지: {gist})"
+    return label
+
+
+def build_body(row) -> str:
+    """row 의 실데이터로 본문(핵심 한 줄) 생성. status 조각은 붙이지 않는다."""
     et = row["event_type"]
     asset = row["asset_name"]
     sev_k = SEV_KO.get(row["severity"], row["severity"])
@@ -74,19 +104,13 @@ def build_description(row) -> str:
             "데이터유출시도": f"{asset}에서 외부로의 데이터 유출 시도 정황, {v} 악용 연계",
             "스팸대량수신":   f"{asset}에서 대량 스팸·피싱 메일 수신, {v} 연관",
         }
-        desc = table.get(et)
-        if desc is None:
-            desc = f"{asset}에서 '{et}' 유형 보안 이벤트 탐지, {v} 취약점과 연관"
-        return desc
+        return table.get(et) or f"{asset}에서 '{et}' 유형 보안 이벤트 탐지, {v} 취약점과 연관"
 
     if finding:  # SCAN 유래(현재 큐레이션 셋엔 없지만 방어적으로)
         table = {
             "정책위반": f"{asset}에서 보안 정책 위반 탐지, 설정 점검 항목 {finding} 위반",
         }
-        desc = table.get(et)
-        if desc is None:
-            desc = f"{asset}에서 '{et}' 유형 이벤트 탐지, 설정 점검 {finding} 관련"
-        return desc
+        return table.get(et) or f"{asset}에서 '{et}' 유형 이벤트 탐지, 설정 점검 {finding} 관련"
 
     # vuln 연결 없음: event_type + 자산명 + severity 로 작성
     table = {
@@ -102,13 +126,18 @@ def build_description(row) -> str:
         "로그위변조시도": f"{asset}의 감사 로그 위·변조 시도 탐지 (심각도 {sev_k})",
         "데이터유출시도": f"{asset}에서 외부로의 데이터 유출 시도 정황 (심각도 {sev_k})",
     }
-    desc = table.get(et)
-    if desc is None:
-        desc = f"{asset}에서 '{et}' 유형 보안 이벤트 탐지 (심각도 {sev_k})"
-    return desc
+    return table.get(et) or f"{asset}에서 '{et}' 유형 보안 이벤트 탐지 (심각도 {sev_k})"
 
 
-QUERY = """
+def build_description(row, *, with_status_tail: bool) -> str:
+    """본문 + (재작성 모드일 때) 실데이터 status 조각."""
+    body = build_body(row)
+    if not with_status_tail:
+        return body
+    return f"{body}; {_status_tail(row['status'], row['action_taken'])}"
+
+
+QUERY_TMPL = """
     SELECT e.event_id, e.event_type, e.severity, e.status,
            e.detected_at::date AS d,
            a.asset_name, a.asset_type,
@@ -126,39 +155,46 @@ QUERY = """
         ORDER BY action_date
         LIMIT 1
     ) r ON true
-    WHERE e.description IS NULL
+    WHERE {where}
     ORDER BY e.event_id
 """
 
+# 재작성 대상: 1차 백필로 채워진 원본 큐레이션 이벤트만. V034 신규(77~88)와 SIM 은 건드리지 않음.
+REWRITE_WHERE = "e.event_id BETWEEN 1 AND 30 AND coalesce(e.description,'') NOT LIKE '[SIM]%'"
+BACKFILL_WHERE = "e.description IS NULL"
+
 
 def main():
-    ap = argparse.ArgumentParser(description="원본 security_events NULL description 백필")
+    ap = argparse.ArgumentParser(description="원본 security_events description 채우기/다양화")
     ap.add_argument("--apply", action="store_true", help="실제 UPDATE + 커밋 (미지정 시 미리보기만)")
+    ap.add_argument("--rewrite", action="store_true",
+                    help="이미 채워진 큐레이션 이벤트(1~30)의 description 을 status 조각 포함해 재작성")
     ap.add_argument("--limit", type=int, default=None, help="미리보기 건수 제한")
     ap.add_argument("--database", default=DB_NAME)
     a = ap.parse_args()
+
+    mode = "재작성(rewrite)" if a.rewrite else "백필(NULL)"
+    where = REWRITE_WHERE if a.rewrite else BACKFILL_WHERE
 
     conn = psycopg2.connect(dbname=a.database)
     conn.autocommit = False
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(QUERY)
+            cur.execute(QUERY_TMPL.format(where=where))
             rows = cur.fetchall()
 
         if not rows:
-            print("description IS NULL 인 이벤트가 없습니다. (이미 백필 완료)")
+            print(f"[{mode}] 대상 이벤트가 없습니다.")
             return
 
-        print(f"DB={a.database}  대상(description IS NULL) {len(rows)}건\n")
+        print(f"DB={a.database}  모드={mode}  대상 {len(rows)}건\n")
         shown = rows if a.limit is None else rows[: a.limit]
         for r in shown:
-            new_desc = build_description(r)
+            new_desc = build_description(r, with_status_tail=a.rewrite)
             vtag = r["cve_id"] or r["finding_ref"] or "(vuln 없음)"
-            print(f"  event #{r['event_id']:<3} {r['d']}  {r['severity']:<8} {r['event_type']:<12} "
-                  f"{r['asset_name']} / {vtag}")
+            print(f"  event #{r['event_id']:<3} {r['d']}  {r['severity']:<8} {r['status']:<11} "
+                  f"{r['event_type']:<12} {r['asset_name']} / {vtag}")
             print(f"     → {new_desc}")
-            if r["action_taken"]:
-                print(f"       (참고 action_taken: {r['action_taken']})")
         if a.limit is not None and len(rows) > a.limit:
             print(f"  ... 외 {len(rows) - a.limit}건 (미리보기 생략)")
 
@@ -169,16 +205,22 @@ def main():
         n = 0
         with conn.cursor() as cur:
             for r in rows:
-                new_desc = build_description(r)
-                cur.execute(
-                    "UPDATE security_events SET description = %s "
-                    "WHERE event_id = %s AND description IS NULL",
-                    (new_desc, r["event_id"]),
-                )
+                new_desc = build_description(r, with_status_tail=a.rewrite)
+                if a.rewrite:
+                    cur.execute(
+                        "UPDATE security_events SET description = %s WHERE event_id = %s",
+                        (new_desc, r["event_id"]),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE security_events SET description = %s "
+                        "WHERE event_id = %s AND description IS NULL",
+                        (new_desc, r["event_id"]),
+                    )
                 n += cur.rowcount
         conn.commit()
-        print(f"\n✔ 커밋 완료: security_events.description {n}건 채움 "
-              f"(WHERE description IS NULL 한정, [SIM] 접두사 없음).")
+        guard = "event_id 명시 지정" if a.rewrite else "WHERE description IS NULL 한정"
+        print(f"\n✔ 커밋 완료: security_events.description {n}건 갱신 ({guard}, [SIM] 접두사 없음).")
         print("  이어서: python scripts/event_threat_linker.py   (임베딩+매칭)")
         print("  확인:   SELECT count(*) FROM fn_verify_audit_chain();  -- breaks=0 이어야 정상")
     except Exception:

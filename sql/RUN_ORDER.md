@@ -67,6 +67,7 @@ python3 scripts/migrate.py baseline --up-to NNN   # 기존 DB 채택: V001~VNNN 
 | V032 | `alert_log` | 실시간 알림 dedup 테이블: `(alert_type, ref_key)` UNIQUE. `alert_poller.py` 가 중복 알림 방지에 사용 | 4(GRANT). `@migrate:verify` |
 | V033 | `event_threat_matching` | 벡터검색-이벤트 연결: `security_events.embedding`(threat_reports 와 동일 차원) + `event_threat_matches`(THREAT_REPORT/PAST_EVENT) + `vw_event_threat_matches` | 2(pgvector/threat_reports), 4(GRANT). `@migrate:verify`. 데이터는 `event_threat_linker.py` 가 채움 |
 | V034 | `threat_campaign_events` | **데이터 전용**: 실제 이벤트 12건(캠페인 8 + 일반 4) + 대응 12건 INSERT, `threat_reports` 3·5·6·7·8 의 `related_event_id` 연결(이제 8/8). 표본 확충 + 매칭 커버리지 | 9(샘플데이터), 27(event_types), 28(응답 타이밍), 33(임베딩). `@migrate:verify`. 적재 후 `event_threat_linker.py` 재실행 |
+| V035 | `reembed_korean_model` | 임베딩 모델 교체: `threat_reports`/`security_events` 의 `embedding` 을 `VECTOR(384)`→`VECTOR(768)` 로 DROP+ADD, HNSW 인덱스 재생성, `event_threat_matches` TRUNCATE. 모델 `all-MiniLM-L6-v2`→`jhgan/ko-sroberta-multitask` | 2, 33. `@migrate:verify`. 적용 후 `generate_embeddings.py` + `event_threat_linker.py` 로 전량 재임베딩 |
 
 각 그룹(V018~20, V021~26)은 대체로 상호 독립이며 표 순서가 자연스럽다.
 V021(search_path)은 V022(EXECUTE 회수)보다 먼저 — 함수 정의를 만지므로.
@@ -203,10 +204,11 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 는 이를 `security_events` 인입 파이프라인에 붙인다.
 
 - **1단계 임베딩**: `security_events.description IS NOT NULL AND embedding IS NULL` 인 행을
-  threat_reports 와 동일 모델(all-MiniLM-L6-v2, 384차원)로 임베딩 → 같은 벡터 공간이라
-  코사인 거리(`<=>`)로 직접 비교 가능.
+  threat_reports 와 동일 모델(**jhgan/ko-sroberta-multitask, 768차원** — V035 에서
+  all-MiniLM-L6-v2 384차원에서 교체)로 임베딩 → 같은 벡터 공간이라 코사인 거리(`<=>`)로 직접 비교.
 - **2단계 매칭**: 아직 해당 `match_type` 을 시도하지 않은 이벤트(`NOT EXISTS` 체크)마다
-  - `THREAT_REPORT`: threat_reports 중 유사도 상위 TOP_K(3), `MIN_SIMILARITY`(0.45, 튜닝 가능) 이상만
+  - `THREAT_REPORT`: threat_reports 중 유사도 상위 TOP_K(3), `MIN_SIMILARITY`(**0.60** — V035
+    ko-sroberta 분포 기준 재튜닝, 이전 MiniLM 은 0.45) 이상만
   - `PAST_EVENT`: 이미 임베딩된 다른 security_events(자기 자신 제외) 중 유사도 상위 TOP_K, 임계값 이상만
   `event_threat_matches` 에 저장.
 - **재실행 안전**: "아직 그 match_type 을 시도 안 한 이벤트"만 대상으로 삼는 것 + `(event_id, match_type,
@@ -215,15 +217,13 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 - **왜 재계산이 아니라 저장인가**: alert_log/scan_runs 와 같은 이유 — 대시보드가 매 새로고침마다
   벡터 유사도를 다시 계산할 필요가 없고, threat_reports 가 나중에 늘어나면 같은 이벤트라도 새 매칭
   행이 추가되는 이력이 남는다.
-- **대시보드**: `soc_dashboard.py` 섹션 i — i-1(THREAT_REPORT)/i-2(PAST_EVENT) 로 분리,
-  각자 유사도순 상위 15건, SIM 필터(`coalesce(description,'') NOT LIKE '[SIM]%'`) 연동.
-- **적용 완료**(2026-09-08): `migrate.py up` 으로 V033 적용, `event_threat_linker.py` 실행,
-  launchd `threatlink` 등록. V034 로 실제 이벤트 12건 추가 후 재실행.
-- **알려진 한계 — 임베딩 모델 한국어 주제 해상도**: `all-MiniLM-L6-v2` 가 "…대응 보고서"
-  산문체 리포트를 주제 일치보다 위로 잡아, `event_threat_matches` 기준 `threat_reports` 커버리지가
-  **7/8**(report 5=피싱 자격증명 탈취 공백). `MIN_SIMILARITY`(0.45)/`TOP_K`(3) 튜닝만으로는
-  못 메움. `threat_reports.related_event_id` 큐레이션 링크는 8/8 존재. 근본 해결은 한국어 특화
-  임베딩 모델 교체. 상세: PROJECT_LOG 2026-09-08 V034 항목.
+- **대시보드**: `soc_dashboard.py` 섹션 i — **i-0(수동 연결 ground truth)** / i-1(THREAT_REPORT
+  자동매칭) / i-2(PAST_EVENT 자동매칭) 로 분리. i-0 는 `threat_reports.related_event_id` 로 사람이
+  확인한 정답 쌍 + "자동매칭 재현" 컬럼(정답 대비 모델 재현율). i-1/i-2 는 각자 유사도순 상위
+  15건, SIM 필터(`coalesce(description,'') NOT LIKE '[SIM]%'`) 연동.
+- **적용 완료**: V033(2026-09-08) → V034 실제 이벤트 12건 → **V035 한국어 임베딩 모델 교체**.
+  V035 후: `threat_reports` 커버리지 **8/8**(report 5 포함), i-0 정답 8쌍 전부 i-1 이 재현(재현율
+  100%), PAST_EVENT 인위적 유사도 1.000 **0건**. 상세: PROJECT_LOG 2026-09-08 V035 항목.
 
 ### 원본 이벤트 description 백필 — `scripts/backfill_event_descriptions.py`
 
@@ -232,21 +232,27 @@ python3 scripts/import_kisa_results.py --dry-run  # 미리보기
 이 스크립트가 그 30건을, 이벤트가 이미 참조하는 실데이터만으로 한 줄 한국어 요약해 채운다.
 
 - 근거 컬럼: `assets.asset_name`, `vulnerabilities.cve_id`/`description`(vuln_id 있을 때),
-  `severity`, `event_type`. `responses.action_taken` 은 미리보기 표시용(문장엔 안 넣음).
+  `severity`, `event_type`, `status`, `detected_at`, `responses.action_taken`.
   **새 사실 생성 안 함**, `[SIM]` 접두사 안 붙임(실제 이벤트 구분 유지).
-- `UPDATE … WHERE description IS NULL` 로 한정 → 재실행 안전(멱등). 감사 트리거 정상 발동.
+- 두 모드:
+  · **백필**(기본): `description IS NULL` 인 이벤트만, `UPDATE … WHERE description IS NULL` 멱등.
+  · **`--rewrite`**(2026-09-08): 이미 채워진 큐레이션 이벤트(1~30, non-SIM)를 재작성.
+    `UPDATE … WHERE event_id = %s` 로 명시 지정. 문장 끝에 그 이벤트의 실제 `status` +
+    첫 `responses.action_taken` 요지를 붙여, (event_type, asset, CVE) 조합이 같아도 문장이
+    갈라지게 한다 — 1차 백필의 "완전 동일 문장 → 유사도 1.000" 문제 해소용.
 
 ```
-python3 scripts/backfill_event_descriptions.py           # 미리보기(전체)
-python3 scripts/backfill_event_descriptions.py --apply   # 실제 UPDATE + 커밋
+python3 scripts/backfill_event_descriptions.py                    # 백필 미리보기
+python3 scripts/backfill_event_descriptions.py --apply            # 백필 반영
+python3 scripts/backfill_event_descriptions.py --rewrite          # 재작성 미리보기
+python3 scripts/backfill_event_descriptions.py --rewrite --apply  # 재작성 반영
 psql -d security_db -c "SELECT count(*) FROM fn_verify_audit_chain();"   # breaks=0 확인
-python3 scripts/event_threat_linker.py                   # 새 description 임베딩/매칭
+python3 scripts/event_threat_linker.py                            # 임베딩/매칭
 ```
 
-- **한계**(2026-09-08 관측): (event_type, asset, CVE) 가 같은 이벤트엔 같은 문장이 생성돼,
-  PAST_EVENT 매칭에 유사도 정확히 1.000 이 다수 나온다(30건 중 고유 문장 23개). 큐레이션
-  이벤트 중 실제로 한 사건에 몰린 구간(2025-08-14 결제API서버, 2025-09-01 사내DB서버)이라
-  일부는 진짜 신호지만, 1.000 자체는 문장 평탄화 아티팩트. 다양화는 후속 후보.
+- 1차 백필(2026-09-08)은 (event_type, asset, CVE) 동일 시 문장이 완전히 같아 PAST_EVENT
+  매칭에 유사도 1.000 이 26건 생겼다. `--rewrite`(status 조각 추가) + V035(ko-sroberta) 재임베딩
+  후 30건 전부 고유 문장이 되고 인위적 1.000 은 0건이 됐다.
 
 ## 자동 스케줄 (launchd) — 등록 완료 (threatlink 는 2026-09-08 추가)
 

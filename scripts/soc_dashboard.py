@@ -262,14 +262,46 @@ except Exception as ex:
 
 st.divider()
 
-# --------------------------------------------- i. 자동 유사 사례 매칭 (event_threat_matches)
-st.subheader("i. 유사 사례 자동 매칭 (threat_reports / 과거 이벤트)")
-st.caption("event_threat_linker.py 가 security_events.description 을 threat_reports·과거 이벤트와 "
-           "임베딩 코사인 유사도로 자동 매칭해 event_threat_matches 에 저장한 결과. "
-           "'이 사건, 예전에 봤던 패턴과 비슷한가?' 를 사람이 검색어를 입력하지 않아도 보여준다. "
-           "PAST_EVENT 유사도가 THREAT_REPORT 보다 구조적으로 높게 나오는 경향이 있어(같은 이벤트 "
-           "카탈로그 안에서 비교하므로) 두 종류를 각자 상위 N건으로 나눠서 보여준다 — 합쳐서 정렬하면 "
-           "THREAT_REPORT 가 밀려서 안 보일 수 있기 때문.")
+# --------------------------------------------- i. 유사 사례 매칭 (수동 링크 vs 모델 자동 매칭)
+st.subheader("i. 유사 사례 매칭 — 수동 연결(ground truth) vs 자동 매칭(모델 예측)")
+st.caption("i-0 은 threat_reports.related_event_id 로 **사람이 직접 확인해 이어 둔** 이벤트↔리포트 "
+           "쌍(정답). i-1/i-2 는 event_threat_linker.py 가 임베딩 코사인 유사도로 **모델이 알아서 "
+           "찾아낸** 매칭(event_threat_matches). i-0 표의 '자동매칭 재현' 컬럼이 정답 대비 모델 재현율을 "
+           "보여준다. PAST_EVENT 유사도가 THREAT_REPORT 보다 구조적으로 높게 나오는 경향이 있어(같은 "
+           "이벤트 카탈로그 안에서 비교) i-1/i-2 를 각자 상위 N건으로 나눠서 보여준다.")
+
+# ---- i-0. 수동 연결 (ground truth) ----
+st.markdown("**i-0. 수동 연결 (ground truth)** — `threat_reports.related_event_id` 로 사람이 확인한 정답 쌍")
+try:
+    df_gt = q("""
+        SELECT tr.report_id, tr.title AS report_title,
+               tr.related_event_id AS event_id,
+               left(coalesce(e.description,''), 55) AS event_description,
+               e.detected_at,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM event_threat_matches m
+                   WHERE m.match_type = 'THREAT_REPORT'
+                     AND m.event_id = tr.related_event_id
+                     AND m.matched_report_id = tr.report_id
+               ) THEN 'O' ELSE 'X' END AS "자동매칭_재현"
+        FROM threat_reports tr
+        LEFT JOIN security_events e ON e.event_id = tr.related_event_id
+        WHERE tr.related_event_id IS NOT NULL
+        ORDER BY tr.report_id
+    """)
+    if df_gt.empty:
+        st.caption("related_event_id 가 채워진 리포트가 없습니다.")
+    else:
+        show(df_gt, use_container_width=True, height=320, hide_index=True)
+        _hit = int((df_gt["자동매칭_재현"] == "O").sum())
+        st.caption(f"정답 {len(df_gt)}쌍 중 i-1(모델 자동매칭)이 같은 리포트를 잡아낸 건 "
+                   f"**{_hit}건** (재현율 {_hit/len(df_gt)*100:.0f}%). "
+                   "X 는 사람은 이었지만 모델이 임계값·TOP_K 안에서 못 찾은 쌍.")
+except Exception as ex:
+    st.warning(f"i-0 조회 불가: {ex}")
+
+st.markdown("---")
+st.markdown("**자동 매칭 (모델 예측)** — 아래 i-1/i-2 는 `event_threat_matches` (모델이 찾아낸 것)")
 
 
 def _etm_query(match_type, limit):
@@ -308,7 +340,8 @@ try:
         else:
             show(df_past, use_container_width=True, height=300, hide_index=True)
             st.caption(f"상위 {len(df_past)}건 (유사도순) · 유사도 0.9+ 는 서로 다른 자산에서 같은 "
-                       "공격 패턴/문구가 반복됐다는 신호일 수 있음(합성 데이터라면 템플릿 재사용 가능성도 있음).")
+                       "공격 패턴이 반복됐다는 신호(실제 캠페인일 수도, 합성 데이터라면 템플릿 재사용일 수도). "
+                       "V035(ko-sroberta) 이후 문장 평탄화로 인한 유사도 1.000 인위적 중복은 없음.")
 except Exception as ex:
     st.warning(f"event_threat_matches 조회 불가 (V033 마이그레이션 적용 여부 확인): {ex}")
 st.divider()

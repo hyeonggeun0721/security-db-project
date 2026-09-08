@@ -24,7 +24,9 @@ def main():
 
     query_text = sys.argv[1]
 
-    model = SentenceTransformer("all-MiniLM-L6-v2")
+    # 2026-09-08 V035 에서 all-MiniLM-L6-v2(384차원)에서 교체 (한국어 특화, 768차원).
+    # threat_reports.embedding 이 새 모델로 채워져 있으므로 검색도 같은 모델을 써야 한다.
+    model = SentenceTransformer("jhgan/ko-sroberta-multitask")
     query_vec = model.encode(query_text).tolist()
 
     conn = psycopg2.connect(dbname=DB_NAME)

@@ -21,7 +21,9 @@ DB_NAME = os.environ.get("PGDATABASE", "security_db")   # 로컬 trust 인증이
 
 def main():
     print("임베딩 모델 로딩 중... (최초 1회는 모델 다운로드로 몇 분 걸릴 수 있음)")
-    model = SentenceTransformer("all-MiniLM-L6-v2")  # 384차원
+    # 2026-09-08 V035 에서 all-MiniLM-L6-v2(384차원)에서 교체 — 한국어 특화 모델로
+    # 바꿔야 threat_reports ↔ security_events 문장이 주제 기준으로 정렬된다.
+    model = SentenceTransformer("jhgan/ko-sroberta-multitask")  # 768차원
 
     conn = psycopg2.connect(dbname=DB_NAME)
     cur = conn.cursor()

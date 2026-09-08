@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict PdTy5Cy283AVry7OSGVteJ7udmWbEAO0BDh2reRpkMPesXgaXvUcP76MmiyIqy7
+\restrict a1rYtiSF1dEviIeRJAl3ge75hHicLQ70J44BVzx8noVThlmXUur4ohMTJezRE95
 
 -- Dumped from database version 15.19 (Homebrew)
 -- Dumped by pg_dump version 15.19 (Homebrew)
@@ -1040,7 +1040,7 @@ CREATE TABLE public.security_events (
     detected_at timestamp with time zone DEFAULT now() NOT NULL,
     status character varying(15) DEFAULT 'OPEN'::character varying NOT NULL,
     description text,
-    embedding public.vector(384),
+    embedding public.vector(768),
     CONSTRAINT security_events_severity_check CHECK (((severity)::text = ANY ((ARRAY['LOW'::character varying, 'MEDIUM'::character varying, 'HIGH'::character varying, 'CRITICAL'::character varying])::text[]))),
     CONSTRAINT security_events_status_check CHECK (((status)::text = ANY ((ARRAY['OPEN'::character varying, 'IN_PROGRESS'::character varying, 'RESOLVED'::character varying])::text[])))
 );
@@ -1057,7 +1057,7 @@ COMMENT ON COLUMN public.security_events.description IS '이벤트 상세 메모
 -- Name: COLUMN security_events.embedding; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.security_events.embedding IS 'description 텍스트 임베딩(all-MiniLM-L6-v2, 384차원). scripts/event_threat_linker.py 가 채움. threat_reports.embedding 과 동일 모델/차원 -> 코사인 거리(<=>)로 직접 비교 가능. description 이 NULL 이거나 아직 처리 전이면 NULL.';
+COMMENT ON COLUMN public.security_events.embedding IS 'description 텍스트 임베딩(jhgan/ko-sroberta-multitask, 768차원; V035 에서 all-MiniLM-L6-v2 384차원에서 교체). threat_reports.embedding 과 동일 모델/차원 -> 코사인 거리(<=>)로 직접 비교. scripts/event_threat_linker.py 가 채움. description 이 NULL 이거나 처리 전이면 NULL.';
 
 
 --
@@ -1123,8 +1123,15 @@ CREATE TABLE public.threat_reports (
     content text NOT NULL,
     report_date date,
     related_event_id integer,
-    embedding public.vector(384)
+    embedding public.vector(768)
 );
+
+
+--
+-- Name: COLUMN threat_reports.embedding; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.threat_reports.embedding IS 'content 텍스트 임베딩(jhgan/ko-sroberta-multitask, 768차원). 이전엔 all-MiniLM-L6-v2(384차원)였으나 V035 에서 한국어 주제 해상도 위해 교체. scripts/generate_embeddings.py 가 채움.';
 
 
 --
@@ -3393,5 +3400,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE summer IN SCHEMA public GRANT SELECT ON TABLES
 -- PostgreSQL database dump complete
 --
 
-\unrestrict PdTy5Cy283AVry7OSGVteJ7udmWbEAO0BDh2reRpkMPesXgaXvUcP76MmiyIqy7
+\unrestrict a1rYtiSF1dEviIeRJAl3ge75hHicLQ70J44BVzx8noVThlmXUur4ohMTJezRE95
 

@@ -9,12 +9,14 @@
 
 ## 현재 상태
 
-_최종 갱신: 2026-09-08 KST (실제 이벤트 12건 추가 V034 — threat_reports 커버리지 + 표본 다양화)_
+_최종 갱신: 2026-09-08 KST (한국어 임베딩 모델 교체 V035 + 백필 문장 다양화 + 대시보드 ground truth)_
 
 ### 프로젝트 위치 / 적용 방식
 - 경로: **`~/security_db_project/`** (macOS TCC 때문에 `~/Desktop` 에서 이동)
-- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V034__*.sql`** 적용.
-  `migrate.py status` → **적용됨 34 · 미적용 0 · drift 0** (V034 는 데이터 전용)
+- 스키마: `scripts/migrate.py` 로 `sql/V001__*.sql` ~ **`V035__*.sql`** 적용.
+  `migrate.py status` → **적용됨 35 · 미적용 0 · drift 0** (V034 데이터 전용, V035 임베딩 컬럼 재정의)
+- **임베딩 모델**: `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원). V035 에서
+  `all-MiniLM-L6-v2`(384차원)에서 교체 — 다국어 범용 모델의 한국어 주제 해상도 한계 때문.
 - 적용된 마이그레이션 파일은 불변. 변경은 새 `V###` 파일 추가로만.
 - **Git 관리 중**: 2026-09-08 저장소 초기화 + 단계별 커밋 히스토리 재구성 후
   **GitHub 비공개 저장소 연결 완료**(`origin` → `github.com/hyeonggeun0721/security-db-project`).
@@ -52,7 +54,13 @@ _최종 갱신: 2026-09-08 KST (실제 이벤트 12건 추가 V034 — threat_re
 - **실제 이벤트 표본 확충 + threat_reports 커버리지(V034)**: `V034__threat_campaign_events.sql`
   가 실제 이벤트 12건(랜섬웨어/피싱/DDoS/클라우드버킷/공급망 캠페인 8건 + 일반 4건) +
   대응 12건을 손으로 작성해 적재하고, `threat_reports` 3·5·6·7·8 의 `related_event_id` 를
-  연결(이제 8/8). 실제 이벤트 30→42건. PAST_EVENT 인위적 1.000 중복은 신규분에서 사라짐.
+  연결(이제 8/8). 실제 이벤트 30→42건.
+- **한국어 임베딩 모델 교체(V035)**: `all-MiniLM-L6-v2`(384) → `jhgan/ko-sroberta-multitask`(768).
+  `V035__reembed_korean_model.sql` 이 두 `embedding` 컬럼을 `VECTOR(768)` 로 재정의 + HNSW
+  재생성 + `event_threat_matches` TRUNCATE, 스크립트 3종 `MODEL_NAME` 변경 후 전량 재임베딩.
+  `MIN_SIMILARITY` 0.45→0.60(새 분포 반영). 결과: **리포트 커버리지 8/8**(report 5 포함),
+  **PAST_EVENT 인위적 유사도 1.000 = 0**(백필 `--rewrite` 로 30건 문장 다양화 병행), 대시보드
+  i-0(ground truth) 정답 8쌍 전부 모델이 재현(재현율 100%).
 - 마이그레이션 러너 `migrate.py` (sha256 drift 탐지). Flyway 는 설치되나 psql 메타명령 비호환으로 미채택.
 - NVD 연동(`nvd_sync.py`/`nvd_watch.py`), SOC 대시보드(`soc_dashboard.py` + 합성데이터 필터 토글 + EPSS 우선순위)
 - 복구 드릴(RTO ≈ 0.2초, 모든 지표 일치), 성능 점검 노트(`PERFORMANCE_NOTES.md`)
@@ -70,35 +78,31 @@ _최종 갱신: 2026-09-08 KST (실제 이벤트 12건 추가 V034 — threat_re
 확인: `launchctl list | grep security-db` (가운데 숫자 = 마지막 종료코드, 0=정상) — 2026-09-08 6종 전부 0.
 `threatlink.err.log` 은 anaconda numpy/scipy `UserWarning` 한 줄뿐(무해).
 
-### 라이브 DB 상태값 (2026-09-08)
+### 라이브 DB 상태값 (2026-09-08, V035 후)
 - `assets` 15건 · `vulnerabilities` **28건 (NVD 12 / SCAN 14 / MANUAL 2)** · `scan_runs` 1건 · **테이블 18 / 뷰 8**
 - `nvd_cve_details` 14행: EPSS 채워짐 12 / nvd_status **SYNCED 12 · NOT_FOUND 2** (PENDING 은 `nvd_sync.py` 로 정리 완료)
-- `security_events` **77건 (`[SIM]` 35 / 실제 42)** · description NULL 0, embedding 전부 채워짐 · `responses` 44건 · `audit_log` 202건 · `alert_log` 2건
-- `threat_reports` 8건 **전부 `related_event_id` 연결됨**(V034 에서 3·5·6·7·8 신규 연결)
-- **`event_threat_matches` 342행**. 실제(non-SIM) 이벤트 발: THREAT_REPORT 58 / PAST_EVENT 124.
-  **THREAT_REPORT 매칭이 잡히는 리포트 7/8** — report 5(피싱 자격증명 탈취)만 공백(임베딩
-  모델 한국어 주제 해상도 한계, 히스토리 2026-09-08 V034 항목 4번). `threatlink` 10분 주기 증분.
-- 실제 이벤트 유사도: THREAT_REPORT 평균 0.708·최대 0.936, PAST_EVENT 평균 0.875·중앙값 0.911
-  (1.000 매칭 26건은 전부 기존 백필분 1~30, V034 신규 77~88 은 인위적 1.000 **0건**)
-- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 34** · FK 17 · CHECK 23
+- `security_events` **79건 (`[SIM]` 37 / 실제 42)** · description NULL 0, embedding 전부 **768차원(ko-sroberta)** · `responses` 44건 · `audit_log` 315건 · `alert_log` 2건
+- `threat_reports` 8건 전부 `related_event_id` 연결(V034) · 임베딩 8건 재생성(V035)
+- **`event_threat_matches` 320행**(V035 에서 TRUNCATE 후 재계산). 실제(non-SIM) 이벤트 발:
+  THREAT_REPORT 98 / PAST_EVENT 117. **THREAT_REPORT 매칭이 잡히는 리포트 8/8**(report 5 포함).
+- 실제 이벤트 유사도(V035): THREAT_REPORT 평균 0.694·중앙 0.697·최대 0.872, PAST_EVENT 평균
+  0.845·중앙 0.859·최대 0.986. **유사도 정확히 1.000 = 0건**(백필 `--rewrite` + 새 모델).
+- 대시보드 i-0(ground truth) 정답 8쌍 전부 i-1 모델 매칭이 재현 → **재현율 100%**.
+- 해시체인 `breaks = 0` · RLS 정책 9 · **schema_migrations 35** · FK 17 · CHECK 23
 - `vw_priority_vulnerabilities` 12건, 그중 `epss_over_cvss=TRUE` **1건 = CVE-2021-26085**(CVSS 5.3 MEDIUM, EPSS 백분위 1.000)
 - 예시 MANUAL 2건: CVE-2021-26085(사용자포털), CVE-2020-3452(방화벽-메인) — 실제 '낮은 CVSS/높은 EPSS' 시연용
 - `[SIM]` 데이터는 `description`/`action_taken` 접두사로 구분, `svc_event_ingest` RLS 가 태그 강제
 
 ### 남은 이슈 / 다음에 하면 좋을 후보
-- **임베딩 모델 한국어 주제 해상도(가장 큰 한계)**: `all-MiniLM-L6-v2` 가 한국어 보안 이벤트
-  문장을 주제가 맞는 `threat_reports` 와 정렬하지 못함. "…대응 보고서" 산문체(report 4·7)를
-  주제 일치보다 위로 잡아, `event_threat_matches` 에서 **report 5(피싱 자격증명 탈취)는 매칭
-  0건**(대표 이벤트 80 기준 report 5 는 6위 0.523, `TOP_K=3` 밖). `related_event_id` 큐레이션
-  링크는 8/8 존재하므로 대시보드가 그걸 병기하면 보완됨. 근본 해결은 한국어 특화 모델
-  (`ko-sroberta`, `bge-m3` 등)로 교체 후 재평가. 상세: 히스토리 2026-09-08 V034 항목 4·7번.
-- **백필 description 평탄화**: `backfill_event_descriptions.py` 가 (event_type, asset, CVE)
-  동일 이벤트에 같은 문장을 생성 → 기존 백필분(1~30)의 PAST_EVENT 매칭에 유사도 정확히 1.000 이
-  26건. `detected_at`/`status`/대응 요지를 실데이터 범위에서 섞어 문장을 갈라놓으면 완화됨
-  (V034 신규분은 손으로 다르게 써서 이미 1.000 없음). 상세: 히스토리 2026-09-08 항목.
-- **THREAT_REPORT 매칭 정밀도**: 실제 이벤트 최고 유사도가 0.876→0.936 으로 올랐지만 주제
-  정합은 여전히 약함(위 임베딩 모델 항목). `MIN_SIMILARITY`(0.45)/`TOP_K`(3) 튜닝만으로는
-  report 5 공백을 깔끔히 못 메움 — `TOP_K=6` 이면 들어오지만 전 이벤트에 노이즈 6개씩 붙음.
+- ~~임베딩 모델 한국어 주제 해상도~~ → **V035 에서 `jhgan/ko-sroberta-multitask`(768) 로 교체해
+  해결**. report 5 포함 커버리지 8/8, ground truth 재현율 100%. (상세: 히스토리 2026-09-08 V035.)
+- ~~백필 description 평탄화~~ → `--rewrite`(status 조각 추가) + 새 모델로 **인위적 유사도 1.000
+  = 0건**. 30건 전부 고유 문장.
+- **SIM 이벤트가 THREAT_REPORT 매칭에 일부 유입**: V035·`MIN_SIMILARITY`=0.60 에서도 SIM 이벤트
+  6건이 TOP-1 유사도 ≥0.60 이라 매칭됨. 대시보드는 SIM 필터로 가리므로 방치 중. 더 엄격히
+  하려면 임계값을 0.63~0.65 로 올리는 안(실제 이벤트 몇 건도 같이 탈락).
+- **`search_similar_reports.py`**: `MODEL_NAME` 만 새 모델로 바꿨고 대화형 CLI 실사용 검증은
+  아직 안 함. `bge-m3`(1024차원)는 현 모델로 목표 달성돼 미시도.
 - **SIM 볼륨**: synth 잡 25분 주기 → 하루 ~100~150건 누적. 데모 아닐 때 `unload` 하거나
   plist `ProgramArguments` 에 `--count 1` 추가 검토. 정리: `DELETE FROM security_events WHERE description LIKE '[SIM]%'` (responses CASCADE, 해시체인 무결).
 - **KISA 재스캔**: Docker Desktop 데몬이 떠 있어야 함(이번엔 이 작업 위해 기동). `ubuntu:22.04` 이미지는 캐시됨.
@@ -120,6 +124,82 @@ _최종 갱신: 2026-09-08 KST (실제 이벤트 12건 추가 V034 — threat_re
 ---
 
 ## 히스토리
+
+### 2026-09-08 KST — 한국어 임베딩 모델 교체(V035) + 백필 문장 다양화 + 대시보드 ground truth 병기
+
+V034 후속 후보 3개(백필 문장 다양화 / 한국어 임베딩 모델 / 대시보드 정답 병기)를 한 라운드에
+처리. 순서: (1) 문장 다양화 먼저 → (2) 모델 교체 + 전체 재임베딩 한 번 → (3) 비교 → (4) 대시보드.
+
+#### 1. 백필 30건 문장 다양화 — `backfill_event_descriptions.py --rewrite`
+- 1차 백필은 (event_type, asset, CVE) 조합이 같으면 문장이 **바이트 단위로 동일** → PAST_EVENT
+  매칭에 유사도 정확히 1.000 이 26건. 대표 중복군: 결제API서버·비정상접근·CVE-2025-0255
+  (event 18/19/22/25), 사내DB서버·비정상접근·CVE-2025-0099(2/26/29/30), 결제API·권한상승·
+  CVE-2025-0378(20/23).
+- 스크립트에 `--rewrite` 모드 추가: 문장 끝에 그 이벤트의 실제 `status`(미대응/진행 중/완료)
+  + 첫 `responses.action_taken` 의 요지(쉼표 앞 구절)를 한 조각 덧붙인다. 둘 다 실데이터.
+  `UPDATE … WHERE event_id = %s` 로 30건 명시 지정(이미 채워져 있으니 IS NULL 안 씀).
+- 미리보기 검토 후 반영: **30건 UPDATE, 고유 문장 23 → 30/30**, 완전 동일 문장 0.
+  `fn_verify_audit_chain()` **breaks = 0**.
+
+#### 2. 임베딩 모델 교체 — `sql/V035__reembed_korean_model.sql` + 스크립트 3종
+- **모델 선정**: 후보 `jhgan/ko-sroberta-multitask`(한국어 특화, 768차원) 를 먼저 사전
+  평가(스크래치 스크립트). 결과가 명확해 `BAAI/bge-m3`(1024차원, 더 무거움)는 시도 안 함:
+  - 피싱 대표 이벤트 80 ↔ report 5 유사도 **0.523(6위) → 0.755(1위)**.
+  - 5개 캠페인 대표(77/80/82/83/84) 전부 자기 리포트가 raw 유사도 **1위**.
+  - 큐레이션 1~30 쌍 유사도 ≥0.9995 개수 **0**(문장 다양화 + 새 모델로 인위적 1.000 소멸).
+  - 로컬 로드 ~26s(CPU), 인코딩 빠름 — 감당 가능.
+- **V035(스키마)**: `threat_reports.embedding`·`security_events.embedding` 을 `VECTOR(384)`
+  DROP 후 `VECTOR(768)` ADD(차원이 달라 ALTER TYPE 불가), 두 HNSW 인덱스 DROP 후 재생성,
+  `COMMENT ON COLUMN` 갱신, `event_threat_matches` **TRUNCATE**(이전 모델 기준 유사도라 폐기).
+  `migrate.py up` → **ok (0.037s)**. 검증절: 두 컬럼 `vector(768)`, 인덱스 재생성, 임베딩·매칭
+  전부 비워짐, `fn_verify_audit_chain()` 0행(DDL 은 감사 트리거 미발화).
+- **스크립트**: `event_threat_linker.py` / `generate_embeddings.py` / `search_similar_reports.py`
+  의 `MODEL_NAME` 을 새 모델로 변경(주석에 이전 모델명·교체 이유 기록).
+- **재임베딩**: `generate_embeddings.py`(threat_reports 8건) + `event_threat_linker.py`
+  (security_events 79건 전량 + 매칭 재계산). THREAT_REPORT 매칭 104 / PAST_EVENT 216(전체).
+
+#### 3. `MIN_SIMILARITY` 재검토 → 0.45 → **0.60**
+새 모델의 유사도 분포가 통째로 이동. 이벤트별 raw TOP-1 THREAT_REPORT 유사도:
+
+| 이벤트 | 건수 | min | 평균 | 중앙값 | max | TOP-1 ≥ 0.60 |
+|---|---:|---:|---:|---:|---:|---:|
+| 실제(non-SIM) | 42 | 0.526 | 0.707 | 0.725 | 0.872 | 38 |
+| SIM | 37 | 0.401 | 0.538 | 0.551 | 0.699 | 6 |
+
+- 이전 MiniLM 은 무관 쌍이 0.45~0.53 이라 0.45 를 잡았다. ko-sroberta 는 **명백히 맞는 매칭이
+  0.60~0.87 클러스터, 약한/무관 쌍이 0.40~0.55 클러스터** 로 갈라져 0.60 이 골짜기에 위치.
+- 0.60 적용 시 실제 이벤트 38/42(90%) 유지, SIM 이벤트 대부분 제외.
+
+#### 4. 비교표 — V033 / V034 / V035 (실제 non-SIM 이벤트 기준, `event_threat_matches`)
+
+| 라운드 | 모델 | THREAT_REPORT 평균/중앙/최대 | PAST_EVENT 평균/중앙/최대 | 유사도 1.000 | 리포트 커버리지 |
+|---|---|---|---|---:|---:|
+| V033 (A/B) | MiniLM 384 | 0.634 / 0.603 / 0.876 | 0.907 / 0.962 / 1.000 | 26 | 6/8 |
+| V034 | MiniLM 384 | 0.708 / 0.759 / 0.936 | 0.875 / 0.911 / 1.000 | 26 | 7/8 |
+| **V035** | **ko-sroberta 768** | **0.694 / 0.697 / 0.872** | **0.845 / 0.859 / 0.986** | **0** | **8/8** |
+
+- **THREAT_REPORT 평균 유사도는 비슷(~0.69)하지만 의미가 다르다**: V033/V034 는 최고 유사도
+  0.936 이 *틀린 매칭*(event 77 랜섬웨어 ↔ report 4 방화벽, 산문체 유사)이었고, V035 최고
+  0.872 는 *맞는 매칭*(event 82 ↔ report 6 DDoS). 크기는 조금 내려갔지만 **상위권이 신뢰 가능**.
+- **PAST_EVENT**: 평균 0.875→0.845, 유사도 1.000 **26 → 0**. 남은 고유사도는 실제 사건 몰림
+  구간(캠페인)이라 정상 신호.
+- **리포트 커버리지 6/8 → 8/8**: report 5(피싱)가 4건, report 7(클라우드)이 1건 잡힘 등 전부 포함.
+
+#### 5. (4) 대시보드 — `soc_dashboard.py` 섹션 i 재구성
+- **i-0. 수동 연결 (ground truth)** 신설: `threat_reports.related_event_id` 로 사람이 확인한
+  이벤트↔리포트 8쌍 + **"자동매칭 재현" 컬럼**(그 쌍을 i-1 모델 매칭이 잡아냈는지 O/X).
+  캡션에 재현율 표기.
+- 섹션 제목·캡션을 "수동 연결(ground truth) vs 자동 매칭(모델 예측)" 으로 명시. i-1/i-2 는
+  "모델이 알아서 찾아낸 것" 이라고 구분.
+- **결과: 정답 8쌍 전부 i-1 이 재현(재현율 100%)**. 즉 새 모델 + 임계값 0.60 조합이 사람이
+  확인한 링크를 하나도 놓치지 않음.
+
+#### 6. 결론 / 남은 것
+- **모델**: `jhgan/ko-sroberta-multitask` 채택. report 5 포함 커버리지 8/8, ground truth 재현율
+  100%, 인위적 유사도 1.000 소멸. 전체적으로 **명확히 개선**.
+- 남은 것: (a) `search_similar_reports.py` 는 모델명만 바꿨고 실사용 검증은 안 함(대화형 CLI).
+  (b) SIM 이벤트가 여전히 THREAT_REPORT 매칭에 일부(6건) 들어옴 — SIM 필터로 대시보드에선
+  가려지므로 방치. (c) bge-m3 는 미시도(현 모델로 목표 달성).
 
 ### 2026-09-08 KST — 실제 이벤트 12건 추가 (V034): threat_reports 5개 주제 커버리지 + 표본 다양화
 

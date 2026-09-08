@@ -41,11 +41,14 @@ from sentence_transformers import SentenceTransformer
 import psycopg2
 
 DB_NAME = os.environ.get("PGDATABASE", "security_db")   # 로컬 trust 인증이라 비밀번호 불필요.
-MODEL_NAME = "all-MiniLM-L6-v2"                          # threat_reports.embedding 과 동일 모델(384차원)
+MODEL_NAME = "jhgan/ko-sroberta-multitask"               # threat_reports.embedding 과 동일 모델(768차원).
+# 2026-09-08 V035 에서 all-MiniLM-L6-v2(384차원)에서 교체 — 다국어 범용 모델이 한국어 보안
+# 이벤트 문장을 주제가 맞는 threat_reports 와 정렬하지 못해(report 5 커버리지 공백) 한국어
+# 특화 모델로 변경. 차원 384->768 이라 반드시 V035 적용 후 실행할 것.
 TOP_K = 3
-# 무관한 문장 쌍은 대체로 낮은 유사도로 관측되는 경향이 있어 잡은 초기값 - 확정된 값은
-# 아님. soc_dashboard.py 섹션 i 에서 실제 저장된 매칭/유사도 분포를 보고 튜닝할 것.
-MIN_SIMILARITY = 0.45
+# V035(ko-sroberta) 분포 기준 재튜닝: 명백히 맞는 매칭은 >=0.60, 약한/무관 쌍은 0.60 미만에
+# 몰린다(이전 MiniLM 0.45 는 무관 쌍이 0.45~0.53 이라 잡은 값). PROJECT_LOG 2026-09-08 V035 참고.
+MIN_SIMILARITY = 0.60
 
 
 def embed_pending_events(conn, model, dry_run):
