@@ -395,6 +395,99 @@ except Exception as ex:
     st.warning(f"event_threat_matches 조회 불가 (V033 마이그레이션 적용 여부 확인): {ex}")
 st.divider()
 
+# ------------------------------------------- j. FDS 이상거래 탐지 (fds-integration 브랜치)
+#   FDS 프로젝트(~/fds)가 같은 DB 의 fds 스키마에 저장한 채점 결과를 보여준다.
+#   보안 이벤트(FRAUD_SUSPECT)는 위 b·d 집계에도 포함되고, 알림은 실행별 요약 1건(V039).
+#   fds 스키마가 없는 DB(과제 원본)에서는 안내만 표시.
+st.subheader("j. FDS 이상거래 탐지 — 경보 대기열 · 시간대별 성능 · 기준점 점검")
+try:
+    _has_fds = bool(q("SELECT to_regclass('fds.alert_events') IS NOT NULL AS ok")["ok"][0])
+except Exception:
+    _has_fds = False
+if not _has_fds:
+    st.caption("이 DB 에는 FDS 연동(fds 스키마 + V038/V039)이 없습니다.")
+else:
+    try:
+        runs = q("""
+            SELECT r.run_id, r.finished_at, r.threshold, r.code_version,
+                   (SELECT count(*) FROM fds.alert_events ae WHERE ae.run_id = r.run_id) AS events
+            FROM fds.model_runs r WHERE r.finished_at IS NOT NULL ORDER BY r.run_id DESC
+        """)
+        if runs.empty:
+            st.caption("끝난 채점 실행이 없습니다.")
+        else:
+            _labels = {int(r.run_id): f"run {int(r.run_id)} · {r.finished_at:%m-%d %H:%M} · 코드 {r.code_version}"
+                                       + ("" if r.events else " · 보안 이벤트 연동 전")
+                       for r in runs.itertuples()}
+            run_id = st.selectbox("채점 실행", list(_labels), format_func=_labels.get)   # 정수만 SQL 에 들어감
+            _run = runs.set_index("run_id").loc[run_id]
+
+            # j-0 요약 카드: 실행 전체 성능(vw_run_performance 의 ROLLUP 합계 행) + 이벤트 심각도
+            perf = q(f"SELECT * FROM fds.vw_run_performance WHERE run_id = {int(run_id)} ORDER BY hour_since_start NULLS LAST")
+            tot = perf[perf["hour_since_start"].isna()].iloc[0]
+            sev = q(f"SELECT severity, count(*) c FROM fds.alert_events WHERE run_id = {int(run_id)} GROUP BY 1")
+            _sev = dict(zip(sev["severity"], sev["c"].astype(int)))
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("채점 거래", f"{int(tot['scored']):,}")
+            m2.metric("경보", int(tot["alerts"]),
+                      help="보안 이벤트 연동 후 실행이면 경보 1건 = FRAUD_SUSPECT 이벤트 1건")
+            m3.metric("CRITICAL / HIGH 이벤트", f"{_sev.get('CRITICAL', 0)} / {_sev.get('HIGH', 0)}")
+            m4.metric("재현율 (확정 라벨)", f"{float(tot['recall']):.1%}",
+                      help="사기 중 경보로 잡은 비율. 라벨이 확정된 거래 기준 사후 평가")
+            m5.metric("정밀도 / 오경보", f"{float(tot['precision']):.1%} / {int(tot['false_alerts'])}건")
+            st.caption(f"기준점 {float(_run['threshold']):.4f} (학습 구간 안쪽 교차검증으로 재현율 80% 목표) · "
+                       "재현율·정밀도는 사기 라벨이 확정된 뒤에만 계산 가능")
+
+            # j-1 경보 대기열 + 연결된 보안 이벤트 상태 (표가 넓어서 전체 폭)
+            st.markdown("**j-1. 경보 대기열** (점수 순 · 판단 근거 = 사기 쪽으로 민 특성 상위 3개, SHAP)")
+            dq = q(f"""
+                SELECT a.queue_rank AS "순위", a.txn_id AS "거래", a.score AS "점수",
+                       a.amount AS "금액", ae.severity AS "심각도", ae.event_id AS "이벤트",
+                       e.status AS "처리상태", a.reasons_text AS "판단 근거"
+                FROM fds.vw_alert_queue a
+                LEFT JOIN fds.alert_events ae ON ae.run_id = a.run_id AND ae.txn_id = a.txn_id
+                LEFT JOIN security_events e ON e.event_id = ae.event_id
+                WHERE a.run_id = {int(run_id)}
+                ORDER BY a.queue_rank LIMIT 20
+            """)
+            show(dq)
+            st.caption(f"상위 {len(dq)}건 / 전체 경보 {int(tot['alerts'])}건 · 라벨(정답)은 표시하지 않음(운영 화면)")
+
+            colj2, colj3 = st.columns(2)
+            with colj2:
+                # j-2 시간대별 재현율
+                st.markdown("**j-2. 시간대별 재현율** (막대 위: 잡은 사기 / 전체 사기)")
+                ph = perf[perf["hour_since_start"].notna()]
+                _rec = [float(v) if v is not None else 0.0 for v in ph["recall"]]
+                st.plotly_chart(bar([f"{int(h)}h" for h in ph["hour_since_start"]], _rec,
+                                    ["#D64045" if r < 0.5 else "#E8833A" if r < 0.7 else "#3BA55D" for r in _rec],
+                                    height=300,
+                                    text=[f"{int(t)}/{int(f)}" for t, f in zip(ph["true_alerts"], ph["frauds"])]),
+                                use_container_width=True)
+                st.caption("시간대마다 사기가 몇 건뿐이라 한두 건으로 크게 출렁임 — 단독으로 성능 저하를 판단하지 말 것")
+            with colj3:
+                # j-3 기준점 점검: 목표 재현율을 맞추려면 기준점·경보·오경보가 어떻게 되나
+                st.markdown("**j-3. 기준점 점검** — 확정 라벨로 보니, 목표 재현율을 맞추려면?")
+                target = st.slider("목표 재현율", 0.60, 0.95, 0.80, 0.05)
+                tc = q(f"SELECT * FROM fds.threshold_check({float(target):.2f}) WHERE run_id = {int(run_id)}")
+                if tc.empty:
+                    st.caption("계산할 수 없음 (라벨 확정된 사기 없음)")
+                else:
+                    t = tc.iloc[0]
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("필요한 기준점", f"{float(t['needed_threshold']):.4f}",
+                              help=f"현재 기준점 {float(t['current_threshold']):.4f}")
+                    k2.metric("경보 수", int(t["needed_alerts"]),
+                              delta=int(t["needed_alerts"]) - int(t["current_alerts"]), delta_color="inverse")
+                    k3.metric("오경보 수", int(t["needed_false_alerts"]),
+                              delta=int(t["needed_false_alerts"]) - int(t["current_false_alerts"]), delta_color="inverse")
+                    st.caption(f"현재 기준점 {float(t['current_threshold']):.4f} · 재현율 {float(t['current_recall']):.1%} "
+                               f"→ 목표 {float(target):.0%}. 오경보가 급증하는 구간('절벽')이 있으면 "
+                               "기준점을 그 앞에서 멈추는 것이 운영상 현실적")
+    except Exception as ex:
+        st.warning(f"FDS 섹션 조회 불가 (권한·F001~F003 적용 여부 확인): {ex}")
+st.divider()
+
 # ------------------------------------------- 부록. NVD 신규 CVE 워치 후보
 with st.expander("부록 · NVD 신규 CVE 워치 후보 (nvd_watch_candidates)"):
     try:
